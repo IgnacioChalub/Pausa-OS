@@ -357,6 +357,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let standItem = NSMenuItem(title: "Aviso de pararse", action: #selector(toggleStand), keyEquivalent: "")
     private let snoozeItem = NSMenuItem(title: "Permitir posponer", action: #selector(toggleSnooze), keyEquivalent: "")
     private let waitItem = NSMenuItem(title: "Esperar a Claude", action: #selector(toggleWait), keyEquivalent: "")
+    private let noTimerItem = NSMenuItem(title: "Sin contador", action: #selector(toggleTimer), keyEquivalent: "")
+    private var settingsWindow: NSWindow?
+    private var settingsModel: SettingsModel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -371,7 +374,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(eyeItem)
         menu.addItem(standItem)
         menu.addItem(snoozeItem)
-        menu.addItem(NSMenuItem(title: "Editar configuración…", action: #selector(editConfig), keyEquivalent: ","))
+        menu.addItem(noTimerItem)
+        menu.addItem(NSMenuItem(title: "Configuración…", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Probar aviso de vista", action: #selector(testEye), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Probar aviso de pararse", action: #selector(testStand), keyEquivalent: ""))
@@ -379,6 +383,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Salir", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         menu.items.forEach { if $0.action != #selector(NSApplication.terminate(_:)) { $0.target = self } }
         statusItem.menu = menu
+        installEditMenu()
 
         eyeOverlay.onFinish = { [weak self] in self?.breakDone(.eye) }
         standOverlay.onFinish = { [weak self] in self?.breakDone(.stand) }
@@ -433,6 +438,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         problemItem.submenu = sub
 
         registerHotKey()
+        settingsModel?.cfg = cfg
         refresh()
     }
 
@@ -533,6 +539,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         eyeItem.state = cfg.eye.enabled ? .on : .off
         standItem.state = cfg.stand.enabled ? .on : .off
         snoozeItem.state = cfg.snoozeEnabled ? .on : .off
+        noTimerItem.state = cfg.showCountdown ? .off : .on
         waitItem.isHidden = !cfg.claudeEnabled
         updateSnoozeBanner()
         statusItem.button?.title = statusTitle()
@@ -623,11 +630,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleEye() { setConfig("vista.activado", !cfg.eye.enabled) }
     @objc private func toggleStand() { setConfig("pararse.activado", !cfg.stand.enabled) }
     @objc private func toggleSnooze() { setConfig("posponer.activado", !cfg.snoozeEnabled) }
-    @objc private func editConfig() {
-        if !NSWorkspace.shared.open(configURL) {
-            NSWorkspace.shared.open([configURL], withApplicationAt: URL(fileURLWithPath: "/System/Applications/TextEdit.app"),
-                                    configuration: NSWorkspace.OpenConfiguration())
+    @objc private func toggleTimer() { setConfig("general.mostrar_contador", !cfg.showCountdown) }
+    @objc private func openSettings() {
+        if settingsWindow == nil {
+            let model = SettingsModel(cfg)
+            settingsModel = model
+            settingsWindow = makeSettingsWindow(model)
         }
+        NSApp.activate(ignoringOtherApps: true)
+        settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    // Sin menú Edición, Cmd+C / Cmd+V no andan en los campos de texto de la configuración.
+    private func installEditMenu() {
+        let edit = NSMenu(title: "Edición")
+        edit.addItem(withTitle: "Deshacer", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "Rehacer", action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(withTitle: "Cortar", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copiar", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Pegar", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Seleccionar todo", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(withTitle: "Cerrar ventana", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        let main = NSMenu()
+        main.addItem(NSMenuItem())  // menú de la app
+        let editItem = NSMenuItem()
+        editItem.submenu = edit
+        main.addItem(editItem)
+        NSApp.mainMenu = main
     }
     @objc private func wake() { if cfg.resetOnWake { reset() } }
     @objc private func reset() {

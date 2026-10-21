@@ -41,4 +41,6 @@ Todo se configura en `config.yml`: qué está prendido, cada cuánto, cuánto du
 
 - `./build.sh` crea `config.yml` a partir del example si todavía no existe (no va a git) y lo enlaza en `~/.config/pausa/config.yml`, que es lo que lee la app.
 - La app lo relee sola cuando guardás. Si hay una clave mal escrita aparece "⚠️ Revisá config.yml" en el menú.
-- Los switches del menú (vista, pararse, posponer) escriben en el mismo archivo.
+- **Configuración…** (Cmd+,) en el menú abre una ventana para editar todo sin tocar el archivo. Cada cambio se guarda al toque en `config.yml`.
+- **Sin contador** en el menú oculta el tiempo de la barra de menú y deja solo el ícono.
+- Los switches del menú (vista, pararse, posponer, sin contador) escriben en el mismo archivo.

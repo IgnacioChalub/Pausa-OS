@@ -124,16 +124,27 @@ struct Config {
     }
 
     // Cambia un valor en el archivo sin tocar el resto (comentarios incluidos).
+    // Si la clave no está, la agrega al final de su sección.
     static func set(_ path: String, _ value: String) {
         guard let text = try? String(contentsOf: configURL, encoding: .utf8) else { return }
         var lines = text.components(separatedBy: "\n")
-        guard let e = entries(lines).first(where: { $0.path == path }) else {
-            NSLog("Pausa: no encontré \(path) en config.yml")
-            return
+        let all = entries(lines)
+        if let e = all.first(where: { $0.path == path }) {
+            let body = e.key + " " + value
+            lines[e.line] = e.comment.isEmpty ? body
+                : body.padding(toLength: max(e.body.count, body.count + 1), withPad: " ", startingAt: 0) + e.comment
+        } else {
+            let parts = path.split(separator: ".", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { return }
+            let line = "  \(parts[1]): \(value)"
+            if let last = all.last(where: { $0.path.hasPrefix(parts[0] + ".") }) {
+                lines.insert(line, at: last.line + 1)
+            } else if let header = lines.firstIndex(where: { $0.hasPrefix(parts[0] + ":") }) {
+                lines.insert(line, at: header + 1)
+            } else {
+                lines += ["", parts[0] + ":", line]
+            }
         }
-        let body = e.key + " " + value
-        lines[e.line] = e.comment.isEmpty ? body
-            : body.padding(toLength: max(e.body.count, body.count + 1), withPad: " ", startingAt: 0) + e.comment
         try? lines.joined(separator: "\n").write(to: realConfigURL, atomically: true, encoding: .utf8)
     }
 
