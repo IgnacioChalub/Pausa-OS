@@ -667,6 +667,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.endGuest()
             self?.flash("Se cortó la conexión con \(name)")
         }
+        // Sin el permiso de Red local la conexión queda esperando para siempre: cortar y avisar.
+        let giveUp = { [weak self, weak p] in
+            guard let self, let p, self.guest === p, !self.guestConnected else { return }
+            self.leaveSession()
+            self.flash("No se pudo entrar a la jam. Revisá Configuración del Sistema → Privacidad y seguridad → Red local → Pausa")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { giveUp() }
         p.start()
         p.send(.hello(NSFullUserName()))
         guest = p
