@@ -1,0 +1,57 @@
+# Pausa — configuración
+#
+# Plantilla. La app lee ~/.config/pausa/config.yml (la primera vez copia este archivo ahí)
+# y la relee sola cada vez que guardás. Si algo está mal escrito, aparece un ⚠️ en el menú.
+#
+# Sonidos: cualquier nombre de /System/Library/Sounds (Sosumi, Hero, Pop, Glass, Ping, Tink...)
+# o "" para que no suene nada.
+
+# Pausa corta: descansar la vista
+vista:
+  activado: true
+  cada_minutos: 20
+  duracion_segundos: 20
+  aviso_previo_segundos: 3          # cuenta regresiva arriba antes de arrancar (0 = arranca directo)
+  aviso_previo_texto: "👀  Pausa corta en {s}"
+  titulo: "👀  Mirá algo lejos"
+  subtitulo: "Algo a unos 6 metros, sin mirar la pantalla."
+  sonido: Sosumi
+  repeticiones_sonido: 1
+
+# Pausa larga: pararse
+pararse:
+  activado: true
+  cada_minutos: 60
+  duracion_segundos: 300
+  aviso_previo_segundos: 10
+  aviso_previo_texto: "🧍  Pausa larga en {s}"
+  titulo: "🧍  Pará. Levantate."
+  subtitulo: "Caminá, estirate, tomá agua."
+  sonido: Sosumi
+  repeticiones_sonido: 3
+
+posponer:
+  activado: true                    # botón "Posponer" en la cuenta regresiva y en la pausa
+  minutos: 5
+  maximo_veces: 3                   # seguidas, para la misma pausa (0 = sin límite)
+  mostrar_banner: true              # cartel arriba mientras la pausa está pospuesta
+  texto_banner: "⏸  Pausa pospuesta, activala apenas puedas · vuelve en {t}"
+
+pantalla:
+  opacidad: 0.88                    # de 0 a 1
+  permitir_saltar: true             # botón "Saltar" y tecla Esc
+  sonido_fin: Hero
+
+reuniones:
+  esperar_si_hay_microfono: true    # si una app usa el micrófono, la pausa espera a que cortes
+
+general:
+  reiniciar_al_despertar: true      # al despertar o desbloquear la Mac, el contador arranca de cero
+  mostrar_contador: true            # tiempo restante en la barra de menú (false = solo el ícono)
+
+claude:
+  activado: true                    # modo "Esperando a Claude"
+  atajo: "cmd+esc"                  # cmd/ctrl/opt/shift + tecla (esc, space, return, tab, a-z, 0-9, f1-f12)
+  titulo: "☕  Esperando a Claude…"
+  subtitulo: "Mirá a otro lado. Te aviso cuando responda."
+  sonido_al_responder: Pop          # cuando Claude termina y no estás en modo espera

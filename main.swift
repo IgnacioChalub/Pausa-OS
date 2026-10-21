@@ -11,12 +11,13 @@ if CommandLine.arguments.contains("--claude-done") {
     exit(0)
 }
 
-// MARK: - Config
+// La configuración está en config.yml (ver Config.swift).
 
-let eyeInterval = 20 * 60        // cada 20 min: mirar a lo lejos
-let standInterval = 60 * 60      // cada 1 hora: pararse
-let eyeBreakSeconds = 20         // duración del aviso de vista
-let standBreakSeconds = 5 * 60   // duración de la pausa para pararse
+func play(_ sound: String) {
+    if !sound.isEmpty { NSSound(named: sound)?.play() }
+}
+
+func clock(_ s: Int) -> String { String(format: "%d:%02d", s / 60, s % 60) }
 
 // MARK: - Reuniones
 
@@ -38,6 +39,56 @@ func micInUse() -> Bool {
     }
 }
 
+// MARK: - Atajo de teclado
+
+struct HotKey {
+    let code: UInt32
+    let carbonMods: UInt32
+    let equivalent: String
+    let mask: NSEvent.ModifierFlags
+}
+
+let keyCodes: [String: (code: Int, equiv: String)] = {
+    var m: [String: (code: Int, equiv: String)] = [
+        "esc": (kVK_Escape, "\u{1b}"), "escape": (kVK_Escape, "\u{1b}"), "space": (kVK_Space, " "),
+        "return": (kVK_Return, "\r"), "enter": (kVK_Return, "\r"), "tab": (kVK_Tab, "\t"),
+    ]
+    let letters = [kVK_ANSI_A, kVK_ANSI_B, kVK_ANSI_C, kVK_ANSI_D, kVK_ANSI_E, kVK_ANSI_F, kVK_ANSI_G,
+                   kVK_ANSI_H, kVK_ANSI_I, kVK_ANSI_J, kVK_ANSI_K, kVK_ANSI_L, kVK_ANSI_M, kVK_ANSI_N,
+                   kVK_ANSI_O, kVK_ANSI_P, kVK_ANSI_Q, kVK_ANSI_R, kVK_ANSI_S, kVK_ANSI_T, kVK_ANSI_U,
+                   kVK_ANSI_V, kVK_ANSI_W, kVK_ANSI_X, kVK_ANSI_Y, kVK_ANSI_Z]
+    for (c, code) in zip("abcdefghijklmnopqrstuvwxyz", letters) { m[String(c)] = (code, String(c)) }
+    let digits = [kVK_ANSI_0, kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4,
+                  kVK_ANSI_5, kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9]
+    for (c, code) in zip("0123456789", digits) { m[String(c)] = (code, String(c)) }
+    let fkeys = [kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6,
+                 kVK_F7, kVK_F8, kVK_F9, kVK_F10, kVK_F11, kVK_F12]
+    for (i, code) in fkeys.enumerated() {
+        m["f\(i + 1)"] = (code, String(UnicodeScalar(UInt16(NSF1FunctionKey + i)).map(Character.init) ?? " "))
+    }
+    return m
+}()
+
+// "cmd+esc", "ctrl+opt+p"...
+func parseHotKey(_ s: String) -> HotKey? {
+    var key: (code: Int, equiv: String)?
+    var mods = 0
+    var mask: NSEvent.ModifierFlags = []
+    for part in s.lowercased().split(separator: "+").map({ $0.trimmingCharacters(in: .whitespaces) }) {
+        switch part {
+        case "cmd", "command", "⌘": mods |= cmdKey; mask.insert(.command)
+        case "ctrl", "control", "⌃": mods |= controlKey; mask.insert(.control)
+        case "opt", "option", "alt", "⌥": mods |= optionKey; mask.insert(.option)
+        case "shift", "⇧": mods |= shiftKey; mask.insert(.shift)
+        default:
+            guard let k = keyCodes[part] else { return nil }
+            key = k
+        }
+    }
+    guard let key else { return nil }
+    return HotKey(code: UInt32(key.code), carbonMods: UInt32(mods), equivalent: key.equiv, mask: mask)
+}
+
 // MARK: - Aviso a pantalla completa
 
 // Ventana sin bordes que igual puede recibir teclado (para el Esc).
@@ -46,10 +97,15 @@ final class KeyWindow: NSWindow {
 }
 
 final class BreakOverlay {
-    private let titleText: String
-    private let subText: String
-    private let seconds: Int
-    private let rings: Int
+    var titleText = ""
+    var subText = ""
+    var seconds = 0       // 0 = sin cuenta regresiva
+    var rings = 0
+    var sound = ""
+    var endSound = ""
+    var opacity = 0.88
+    var allowSkip = true
+    var snoozeTitle: String?  // nil = sin botón de posponer
     private var windows: [NSWindow] = []
     private var labels: [NSTextField] = []
     private var timer: Timer?
@@ -57,13 +113,18 @@ final class BreakOverlay {
     private var escMonitor: Any?
     private var remaining = 0
     var onFinish: (() -> Void)?
+    var onSnooze: (() -> Void)?
     var isShowing: Bool { !windows.isEmpty }
 
-    init(title: String, sub: String, seconds: Int, rings: Int) {
-        titleText = title
-        subText = sub
-        self.seconds = seconds
-        self.rings = rings
+    func configure(_ c: BreakConfig, _ cfg: Config) {
+        titleText = c.title
+        subText = c.sub
+        seconds = c.duration
+        rings = c.rings
+        sound = c.sound
+        endSound = cfg.endSound
+        opacity = cfg.opacity
+        allowSkip = cfg.allowSkip
     }
 
     func show() {
@@ -73,7 +134,7 @@ final class BreakOverlay {
                              backing: .buffered, defer: false, screen: screen)
             w.level = .screenSaver
             w.isOpaque = false
-            w.backgroundColor = NSColor.black.withAlphaComponent(0.88)
+            w.backgroundColor = NSColor.black.withAlphaComponent(opacity)
             w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
 
             let title = NSTextField(labelWithString: titleText)
@@ -87,11 +148,18 @@ final class BreakOverlay {
             count.textColor = .white
             labels.append(count)
 
-            let skip = NSButton(title: "Saltar (Esc)", target: self, action: #selector(finish))
-            skip.bezelStyle = .rounded
-            skip.controlSize = .large
+            var buttons: [NSView] = []
+            if let t = snoozeTitle {
+                buttons.append(button(t, #selector(snooze)))
+            }
+            if allowSkip {
+                buttons.append(button("Saltar (Esc)", #selector(finish)))
+            }
+            let row = NSStackView(views: buttons)
+            row.orientation = .horizontal
+            row.spacing = 16
 
-            let stack = NSStackView(views: [title, sub, count, skip])
+            let stack = NSStackView(views: [title, sub, count, row])
             stack.orientation = .vertical
             stack.spacing = 24
             stack.setCustomSpacing(60, after: count)
@@ -111,9 +179,11 @@ final class BreakOverlay {
         NSApp.activate(ignoringOtherApps: true)
         windows.first?.makeKey()
         // Esc cierra el aviso (por si estás en una llamada)
-        escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == 53 { self?.finish(); return nil }
-            return event
+        if allowSkip {
+            escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                if event.keyCode == 53 { self?.finish(); return nil }
+                return event
+            }
         }
         update()
 
@@ -125,10 +195,10 @@ final class BreakOverlay {
             }
         }
 
-        guard rings > 0 else { return }  // seconds == 0 implica sin cuenta regresiva
-        NSSound(named: "Sosumi")?.play()
-        soundTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
-            NSSound(named: "Sosumi")?.play()
+        guard rings > 0 else { return }
+        play(sound)
+        soundTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            play(self?.sound ?? "")
         }
         // suena `rings` veces y para
         DispatchQueue.main.asyncAfter(deadline: .now() + Double(rings - 1) * 2 + 0.5) { [weak self] in
@@ -136,63 +206,172 @@ final class BreakOverlay {
         }
     }
 
-    private func update() {
-        guard seconds > 0 else { return }
-        let s = String(format: "%d:%02d", remaining / 60, remaining % 60)
-        labels.forEach { $0.stringValue = s }
+    private func button(_ title: String, _ action: Selector) -> NSButton {
+        let b = NSButton(title: title, target: self, action: action)
+        b.bezelStyle = .rounded
+        b.controlSize = .large
+        return b
     }
 
-    @objc func finish() {
-        guard !windows.isEmpty else { return }
+    private func update() {
+        guard seconds > 0 else { return }
+        labels.forEach { $0.stringValue = clock(remaining) }
+    }
+
+    private func close() -> Bool {
+        guard !windows.isEmpty else { return false }
         timer?.invalidate()
         soundTimer?.invalidate()
         if let m = escMonitor { NSEvent.removeMonitor(m); escMonitor = nil }
         windows.forEach { $0.orderOut(nil) }
         windows.removeAll()
         labels.removeAll()
-        NSSound(named: "Hero")?.play()
+        return true
+    }
+
+    @objc func finish() {
+        guard close() else { return }
+        play(endSound)
         onFinish?()
+    }
+
+    @objc private func snooze() {
+        guard close() else { return }
+        onSnooze?()
+    }
+}
+
+// MARK: - Banner
+
+// Cartelito arriba al centro que no roba el foco: cuenta regresiva y "pausa pospuesta".
+final class Banner: NSObject {
+    private var panel: NSPanel?
+    private let label = NSTextField(labelWithString: "")
+    private var actions: [() -> Void] = []
+    var isShowing: Bool { panel != nil }
+
+    func show(_ text: String, buttons: [(String, () -> Void)]) {
+        hide()
+        label.stringValue = text
+        label.font = .monospacedDigitSystemFont(ofSize: 15, weight: .semibold)
+        label.textColor = .white
+        actions = buttons.map(\.1)
+        let views: [NSView] = [label] + buttons.enumerated().map { i, b in
+            let btn = NSButton(title: b.0, target: self, action: #selector(tapped(_:)))
+            btn.bezelStyle = .rounded
+            btn.tag = i
+            return btn
+        }
+        let stack = NSStackView(views: views)
+        stack.orientation = .horizontal
+        stack.spacing = 12
+        stack.edgeInsets = NSEdgeInsets(top: 10, left: 18, bottom: 10, right: 12)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let bg = NSVisualEffectView()
+        bg.material = .hudWindow
+        bg.blendingMode = .behindWindow
+        bg.state = .active
+        bg.wantsLayer = true
+        bg.layer?.cornerRadius = 12
+        bg.layer?.masksToBounds = true
+        bg.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: bg.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: bg.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: bg.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bg.bottomAnchor),
+        ])
+
+        let p = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
+                        backing: .buffered, defer: false)
+        p.level = .statusBar
+        p.isOpaque = false
+        p.backgroundColor = .clear
+        p.hasShadow = true
+        p.hidesOnDeactivate = false
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        p.contentView = bg
+        panel = p
+        layout()
+        p.alphaValue = 0
+        p.orderFrontRegardless()
+        p.animator().alphaValue = 1
+    }
+
+    func setText(_ text: String) {
+        guard label.stringValue != text else { return }
+        label.stringValue = text
+        layout()
+    }
+
+    func hide() {
+        panel?.orderOut(nil)
+        panel = nil
+        actions = []
+    }
+
+    private func layout() {
+        guard let p = panel, let v = p.contentView, let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        let size = v.fittingSize
+        let vf = screen.visibleFrame
+        p.setFrame(NSRect(x: vf.midX - size.width / 2, y: vf.maxY - size.height - 12,
+                          width: size.width, height: size.height), display: true)
+    }
+
+    @objc private func tapped(_ sender: NSButton) {
+        let action = actions[sender.tag]
+        action()
     }
 }
 
 // MARK: - App
 
+enum Kind { case eye, stand }
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var tick: Timer?
-    private var elapsed = 0
+    private var cfg = Config.load()
+    private var cfgDate = Config.modified
+    private var sinceEye = 0       // segundos desde la última pausa de vista
+    private var sinceStand = 0     // segundos desde la última pausa de pararse
     private var paused = false
-    private var inBreak = false
     private var inMeeting = false
-    private var pendingEye = false  // aviso de vista que quedó pendiente por una reunión
-    private let eyeOverlay = BreakOverlay(title: "👀  Mirá algo lejos",
-                                          sub: "Algo a unos 6 metros, sin mirar la pantalla.",
-                                          seconds: eyeBreakSeconds, rings: 1)
-    private let overlay = BreakOverlay(title: "🧍  Pará. Levantate.",
-                                       sub: "Caminá, estirate, tomá agua.",
-                                       seconds: standBreakSeconds, rings: 3)
-    private let waitOverlay = BreakOverlay(title: "☕  Esperando a Claude…",
-                                           sub: "Mirá a otro lado. Te aviso cuando responda.",
-                                           seconds: 0, rings: 0)
+    private var pending: Kind?     // pausa que ya tocaba pero espera (reunión o pospuesta)
+    private var snoozeLeft = 0     // segundos hasta que vuelve la pausa pospuesta
+    private var snoozes = 0        // veces seguidas que se pospuso
+    private var warning: Kind?     // cuenta regresiva previa en curso
+    private var warnLeft = 0
+    private var current: Kind?     // pausa en pantalla
+    private var inBreak: Bool { warning != nil || current != nil || waitOverlay.isShowing }
+    private let eyeOverlay = BreakOverlay()
+    private let standOverlay = BreakOverlay()
+    private let waitOverlay = BreakOverlay()
+    private let warnBanner = Banner()
+    private let snoozeBanner = Banner()
     private var hotKey: EventHotKeyRef?
+    private let problemItem = NSMenuItem(title: "⚠️ Revisá config.yml", action: nil, keyEquivalent: "")
     private let pauseItem = NSMenuItem(title: "Pausar", action: #selector(togglePause), keyEquivalent: "p")
-    private let standItem = NSMenuItem(title: "Aviso de 1 hora", action: #selector(toggleStand), keyEquivalent: "")
-    private var standEnabled: Bool {
-        get { UserDefaults.standard.object(forKey: "standEnabled") as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: "standEnabled") }
-    }
+    private let eyeItem = NSMenuItem(title: "Aviso de vista", action: #selector(toggleEye), keyEquivalent: "")
+    private let standItem = NSMenuItem(title: "Aviso de pararse", action: #selector(toggleStand), keyEquivalent: "")
+    private let snoozeItem = NSMenuItem(title: "Permitir posponer", action: #selector(toggleSnooze), keyEquivalent: "")
+    private let waitItem = NSMenuItem(title: "Esperar a Claude", action: #selector(toggleWait), keyEquivalent: "")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
 
         let menu = NSMenu()
+        menu.addItem(problemItem)
         menu.addItem(pauseItem)
         menu.addItem(NSMenuItem(title: "Reiniciar contador", action: #selector(reset), keyEquivalent: "r"))
-        menu.addItem(standItem)
-        let waitItem = NSMenuItem(title: "Esperar a Claude", action: #selector(toggleWait), keyEquivalent: "\u{1b}")
-        waitItem.keyEquivalentModifierMask = .command
         menu.addItem(waitItem)
+        menu.addItem(.separator())
+        menu.addItem(eyeItem)
+        menu.addItem(standItem)
+        menu.addItem(snoozeItem)
+        menu.addItem(NSMenuItem(title: "Editar configuración…", action: #selector(editConfig), keyEquivalent: ","))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Probar aviso de vista", action: #selector(testEye), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Probar aviso de pararse", action: #selector(testStand), keyEquivalent: ""))
@@ -201,103 +380,267 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.items.forEach { if $0.action != #selector(NSApplication.terminate(_:)) { $0.target = self } }
         statusItem.menu = menu
 
-        eyeOverlay.onFinish = { [weak self] in
-            guard let self else { return }
-            self.inBreak = false
-            if self.elapsed >= standInterval { self.elapsed = 0 }
-            self.refresh()
-        }
-        waitOverlay.onFinish = { [weak self] in
-            self?.inBreak = false
-            self?.refresh()
-        }
-        overlay.onFinish = { [weak self] in
-            self?.inBreak = false
-            self?.elapsed = 0
-            self?.refresh()
-        }
+        eyeOverlay.onFinish = { [weak self] in self?.breakDone(.eye) }
+        standOverlay.onFinish = { [weak self] in self?.breakDone(.stand) }
+        eyeOverlay.onSnooze = { [weak self] in self?.snooze(.eye) }
+        standOverlay.onSnooze = { [weak self] in self?.snooze(.stand) }
+        waitOverlay.onFinish = { [weak self] in self?.refresh() }
 
         // Si la Mac se durmió o se bloqueó, ya estuviste lejos: reiniciar.
         let ws = NSWorkspace.shared.notificationCenter
-        ws.addObserver(self, selector: #selector(reset), name: NSWorkspace.didWakeNotification, object: nil)
+        ws.addObserver(self, selector: #selector(wake), name: NSWorkspace.didWakeNotification, object: nil)
         DistributedNotificationCenter.default().addObserver(
-            self, selector: #selector(reset), name: .init("com.apple.screenIsUnlocked"), object: nil)
+            self, selector: #selector(wake), name: .init("com.apple.screenIsUnlocked"), object: nil)
 
         DistributedNotificationCenter.default().addObserver(
             self, selector: #selector(claudeDone), name: claudeDoneNotification, object: nil)
-        registerHotKey()
+        installHotKeyHandler()
 
+        applyConfig()
         tick = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.step() }
         RunLoop.main.add(tick!, forMode: .common)
+    }
+
+    // MARK: Config
+
+    private func conf(_ k: Kind) -> BreakConfig { k == .eye ? cfg.eye : cfg.stand }
+    private func overlay(_ k: Kind) -> BreakOverlay { k == .eye ? eyeOverlay : standOverlay }
+
+    private func reloadConfigIfChanged() {
+        let d = Config.modified
+        guard d != cfgDate else { return }
+        cfgDate = d
+        cfg = Config.load()
+        applyConfig()
+    }
+
+    private func applyConfig() {
+        eyeOverlay.configure(cfg.eye, cfg)
+        standOverlay.configure(cfg.stand, cfg)
+        waitOverlay.titleText = cfg.claudeTitle
+        waitOverlay.subText = cfg.claudeSub
+        waitOverlay.endSound = cfg.endSound
+        waitOverlay.opacity = cfg.opacity
+        waitOverlay.allowSkip = true  // sin cuenta regresiva: siempre tiene que poder cerrarse
+
+        // Si se apagó la pausa que estaba esperando, se descarta.
+        if let k = pending, !conf(k).enabled { pending = nil; snoozeLeft = 0; snoozes = 0 }
+        if !cfg.snoozeEnabled { snoozeLeft = 0 }
+
+        problemItem.isHidden = cfg.problems.isEmpty
+        let sub = NSMenu()
+        cfg.problems.forEach { sub.addItem(NSMenuItem(title: $0, action: nil, keyEquivalent: "")) }
+        problemItem.submenu = sub
+
+        registerHotKey()
         refresh()
     }
 
+    private func setConfig(_ path: String, _ value: Bool) {
+        Config.set(path, value ? "true" : "false")
+        reloadConfigIfChanged()
+    }
+
+    // MARK: Ciclo
+
     private func step() {
-        guard !paused, !inBreak else { return }
-        elapsed += 1
-        // En reunión el contador sigue, pero los avisos esperan a que cortes.
-        inMeeting = micInUse()
-        if standEnabled && elapsed >= standInterval {
-            guard !inMeeting else { refresh(); return }
-            pendingEye = false
-            inBreak = true
-            overlay.show()
-        } else if elapsed % eyeInterval == 0 || pendingEye {
-            guard !inMeeting else { pendingEye = true; refresh(); return }
-            pendingEye = false
-            inBreak = true
-            eyeOverlay.show()
+        reloadConfigIfChanged()
+        guard !paused else { return }
+        if let k = warning {
+            warnLeft -= 1
+            if warnLeft <= 0 { beginBreak(k) } else { warnBanner.setText(warnText(k)) }
+            refresh()
+            return
         }
+        guard !inBreak else { return }
+        sinceEye += 1
+        sinceStand += 1
+        if snoozeLeft > 0 { snoozeLeft -= 1 }
+        // En reunión el contador sigue, pero los avisos esperan a que cortes.
+        inMeeting = cfg.waitForMeetings && micInUse()
+        if cfg.stand.enabled && sinceStand >= cfg.stand.every {
+            pending = .stand  // la de pararse le gana a la de vista
+        } else if pending == nil && cfg.eye.enabled && sinceEye >= cfg.eye.every {
+            pending = .eye
+        }
+        if let k = pending, snoozeLeft == 0, !inMeeting { announce(k) }
         refresh()
     }
+
+    private var canSnooze: Bool { cfg.snoozeEnabled && (cfg.snoozeMax == 0 || snoozes < cfg.snoozeMax) }
+
+    private var snoozeLabel: String {
+        let s = cfg.snoozeSeconds
+        return s % 60 == 0 ? "Posponer \(s / 60) min" : "Posponer \(clock(s))"
+    }
+
+    private func warnText(_ k: Kind) -> String {
+        conf(k).warningText.replacingOccurrences(of: "{s}", with: "\(warnLeft)")
+    }
+
+    // Cuenta regresiva arriba antes de tapar la pantalla.
+    private func announce(_ k: Kind) {
+        let c = conf(k)
+        guard c.warning > 0 else { beginBreak(k); return }
+        warning = k
+        warnLeft = c.warning
+        var buttons: [(String, () -> Void)] = [("Empezar ya", { [weak self] in self?.beginBreak(k) })]
+        if canSnooze { buttons.insert((snoozeLabel, { [weak self] in self?.snooze(k) }), at: 0) }
+        warnBanner.show(warnText(k), buttons: buttons)
+        refresh()
+    }
+
+    private func beginBreak(_ k: Kind) {
+        warning = nil
+        warnBanner.hide()
+        current = k
+        let o = overlay(k)
+        o.snoozeTitle = canSnooze ? snoozeLabel : nil
+        o.show()
+        refresh()
+    }
+
+    private func snooze(_ k: Kind) {
+        warning = nil
+        warnBanner.hide()
+        current = nil
+        pending = k
+        snoozes += 1
+        snoozeLeft = cfg.snoozeSeconds
+        refresh()
+    }
+
+    private func breakDone(_ k: Kind) {
+        current = nil
+        pending = nil
+        snoozes = 0
+        snoozeLeft = 0
+        sinceEye = 0
+        if k == .stand { sinceStand = 0 }
+        refresh()
+    }
+
+    private func cancelWarning() {
+        guard warning != nil else { return }
+        warning = nil
+        warnBanner.hide()
+    }
+
+    // MARK: Barra de menú
 
     private func refresh() {
         pauseItem.title = paused ? "Reanudar" : "Pausar"
-        standItem.state = standEnabled ? .on : .off
-        let toEye = eyeInterval - elapsed % eyeInterval
-        let nextIsStand = standEnabled && elapsed + toEye >= standInterval
-        let icon = paused ? "⏸" : inMeeting ? "📞" : (nextIsStand ? "🧍" : "👁")
-        if inMeeting && (pendingEye || (standEnabled && elapsed >= standInterval)) {
-            statusItem.button?.title = "📞 después"
-            return
-        }
-        let m = toEye / 60, s = toEye % 60
-        statusItem.button?.title = inBreak ? (waitOverlay.isShowing ? "☕" : standEnabled && elapsed >= standInterval ? "🧍 ahora" : "👀 ahora") : String(format: "%@ %d:%02d", icon, m, s)
+        eyeItem.state = cfg.eye.enabled ? .on : .off
+        standItem.state = cfg.stand.enabled ? .on : .off
+        snoozeItem.state = cfg.snoozeEnabled ? .on : .off
+        waitItem.isHidden = !cfg.claudeEnabled
+        updateSnoozeBanner()
+        statusItem.button?.title = statusTitle()
     }
 
-    // Cmd+Esc global (Carbon no necesita permiso de Accesibilidad)
-    private func registerHotKey() {
+    private func statusTitle() -> String {
+        if paused { return "⏸" }
+        if waitOverlay.isShowing { return "☕" }
+        if let k = warning { return "\(k == .stand ? "🧍" : "👀") \(warnLeft)" }
+        if let k = current { return k == .stand ? "🧍 ahora" : "👀 ahora" }
+        if inMeeting && pending != nil && snoozeLeft == 0 { return "📞 después" }
+        if snoozeLeft > 0 { return cfg.showCountdown ? "💤 \(clock(snoozeLeft))" : "💤" }
+        var next: (Kind, Int)?
+        if cfg.eye.enabled { next = (.eye, cfg.eye.every - sinceEye) }
+        if cfg.stand.enabled, cfg.stand.every - sinceStand <= next?.1 ?? .max {
+            next = (.stand, cfg.stand.every - sinceStand)
+        }
+        guard let (k, left) = next else { return "😌" }  // todo apagado
+        let icon = inMeeting ? "📞" : (k == .stand ? "🧍" : "👁")
+        return cfg.showCountdown ? "\(icon) \(clock(max(left, 0)))" : icon
+    }
+
+    private func updateSnoozeBanner() {
+        guard cfg.snoozeBanner, snoozeLeft > 0, !paused, !inBreak else { snoozeBanner.hide(); return }
+        let text = cfg.snoozeText.replacingOccurrences(of: "{t}", with: clock(snoozeLeft))
+        if snoozeBanner.isShowing {
+            snoozeBanner.setText(text)
+        } else {
+            snoozeBanner.show(text, buttons: [("Empezar ahora", { [weak self] in self?.startPendingNow() })])
+        }
+    }
+
+    private func startPendingNow() {
+        guard let k = pending else { return }
+        snoozeLeft = 0
+        beginBreak(k)
+    }
+
+    // MARK: Claude
+
+    // Atajo global (Carbon no necesita permiso de Accesibilidad)
+    private func installHotKeyHandler() {
         var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         InstallEventHandler(GetApplicationEventTarget(), { _, _, userData in
             let me = Unmanaged<AppDelegate>.fromOpaque(userData!).takeUnretainedValue()
             DispatchQueue.main.async { me.toggleWait() }
             return noErr
         }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), nil)
-        RegisterEventHotKey(UInt32(kVK_Escape), UInt32(cmdKey), EventHotKeyID(signature: 0x5041_5553, id: 1),
+    }
+
+    private func registerHotKey() {
+        if let h = hotKey { UnregisterEventHotKey(h); hotKey = nil }
+        waitItem.keyEquivalent = ""
+        guard cfg.claudeEnabled else { return }
+        guard let hk = parseHotKey(cfg.claudeHotKey) else {
+            problemItem.isHidden = false
+            problemItem.submenu?.addItem(NSMenuItem(title: "Atajo inválido: \(cfg.claudeHotKey)", action: nil, keyEquivalent: ""))
+            return
+        }
+        waitItem.keyEquivalent = hk.equivalent
+        waitItem.keyEquivalentModifierMask = hk.mask
+        RegisterEventHotKey(hk.code, hk.carbonMods, EventHotKeyID(signature: 0x5041_5553, id: 1),
                             GetApplicationEventTarget(), 0, &hotKey)
     }
 
     @objc private func toggleWait() {
         if waitOverlay.isShowing { waitOverlay.finish(); return }
-        guard !inBreak else { return }
-        inBreak = true
+        guard cfg.claudeEnabled, !inBreak else { return }
         waitOverlay.show()
         refresh()
     }
 
     @objc private func claudeDone() {
         if waitOverlay.isShowing {
-            waitOverlay.finish()  // suena "Hero"
+            waitOverlay.finish()  // suena el sonido de fin
         } else {
-            NSSound(named: "Pop")?.play()
+            play(cfg.claudeDoneSound)
         }
     }
 
-    @objc private func togglePause() { paused.toggle(); refresh() }
-    @objc private func toggleStand() { standEnabled.toggle(); refresh() }
-    @objc private func reset() { elapsed = 0; refresh() }
-    @objc private func testEye() { inBreak = true; eyeOverlay.show(); refresh() }
-    @objc private func testStand() { inBreak = true; overlay.show(); refresh() }
+    // MARK: Menú
+
+    @objc private func togglePause() {
+        paused.toggle()
+        if paused { cancelWarning() }  // al reanudar, la pausa pendiente vuelve a avisar
+        refresh()
+    }
+    @objc private func toggleEye() { setConfig("vista.activado", !cfg.eye.enabled) }
+    @objc private func toggleStand() { setConfig("pararse.activado", !cfg.stand.enabled) }
+    @objc private func toggleSnooze() { setConfig("posponer.activado", !cfg.snoozeEnabled) }
+    @objc private func editConfig() {
+        if !NSWorkspace.shared.open(configURL) {
+            NSWorkspace.shared.open([configURL], withApplicationAt: URL(fileURLWithPath: "/System/Applications/TextEdit.app"),
+                                    configuration: NSWorkspace.OpenConfiguration())
+        }
+    }
+    @objc private func wake() { if cfg.resetOnWake { reset() } }
+    @objc private func reset() {
+        sinceEye = 0
+        sinceStand = 0
+        pending = nil
+        snoozeLeft = 0
+        snoozes = 0
+        cancelWarning()
+        refresh()
+    }
+    @objc private func testEye() { if !inBreak { announce(.eye) } }
+    @objc private func testStand() { if !inBreak { announce(.stand) } }
 }
 
 let app = NSApplication.shared
