@@ -26,6 +26,7 @@ func makeSettingsWindow(_ model: SettingsModel) -> NSWindow {
 
 final class SettingsModel: ObservableObject {
     @Published var cfg: Config
+    var test: ((Kind) -> Void)?
 
     init(_ cfg: Config) { self.cfg = cfg }
 
@@ -68,12 +69,12 @@ struct SettingsView: View {
             if !model.cfg.problems.isEmpty {
                 Section {
                     ForEach(model.cfg.problems, id: \.self) {
-                        Label($0, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        Label($0, systemImage: "exclamationmark.triangle").foregroundStyle(Color(nsColor: Palette.danger))
                     }
                 }
             }
-            breakSection("Pausa corta · vista", "vista", \.eye)
-            breakSection("Pausa larga · pararse", "pararse", \.stand)
+            breakSection("Pausa corta", "vista", \.eye, .eye)
+            breakSection("Pausa larga", "pararse", \.stand, .stand)
 
             Section("Posponer") {
                 Toggle("Permitir posponer", isOn: model.bool("posponer.activado", \.snoozeEnabled))
@@ -95,7 +96,7 @@ struct SettingsView: View {
                         Text("\(Int((model.cfg.opacity * 100).rounded()))%").monospacedDigit().frame(width: 40)
                     }
                 }
-                Toggle("Permitir saltar (botón y Esc)", isOn: model.bool("pantalla.permitir_saltar", \.allowSkip))
+                Toggle("Permitir saltar (botón y tecla Esc)", isOn: model.bool("pantalla.permitir_saltar", \.allowSkip))
                 SoundPicker(label: "Sonido al terminar", value: model.string("pantalla.sonido_fin", \.endSound))
             }
 
@@ -108,7 +109,7 @@ struct SettingsView: View {
                        isOn: model.bool("general.mostrar_contador", \.showCountdown))
             }
 
-            Section("Esperando a Claude") {
+            Section("Claude") {
                 Toggle("Activado", isOn: model.bool("claude.activado", \.claudeEnabled))
                 Group {
                     LabeledContent("Atajo") {
@@ -139,22 +140,28 @@ struct SettingsView: View {
         .frame(minWidth: 480, minHeight: 400)
     }
 
-    private func breakSection(_ title: String, _ s: String, _ kp: WritableKeyPath<Config, BreakConfig>) -> some View {
-        Section(title) {
+    private func breakSection(_ title: String, _ s: String, _ kp: WritableKeyPath<Config, BreakConfig>, _ k: Kind) -> some View {
+        Section {
             Toggle("Activada", isOn: model.bool("\(s).activado", kp.appending(path: \.enabled)))
             Group {
                 MinutesField(label: "Cada", value: model.minutes("\(s).cada_minutos", kp.appending(path: \.every)))
                 IntField(label: "Dura", value: model.int("\(s).duracion_segundos", kp.appending(path: \.duration)),
-                         unit: "seg", step: 5)
-                IntField(label: "Cuenta regresiva antes", value: model.int("\(s).aviso_previo_segundos", kp.appending(path: \.warning)),
-                         unit: "seg (0 = sin aviso)")
-                TextField("Texto de la cuenta regresiva", text: model.string("\(s).aviso_previo_texto", kp.appending(path: \.warningText)))
+                         unit: "s", step: 5)
+                IntField(label: "Aviso previo", value: model.int("\(s).aviso_previo_segundos", kp.appending(path: \.warning)),
+                         unit: "s (0 = arranca directo)")
+                TextField("Texto del aviso previo", text: model.string("\(s).aviso_previo_texto", kp.appending(path: \.warningText)))
                 TextField("Título", text: model.string("\(s).titulo", kp.appending(path: \.title)))
                 TextField("Subtítulo", text: model.string("\(s).subtitulo", kp.appending(path: \.sub)))
                 SoundPicker(label: "Sonido", value: model.string("\(s).sonido", kp.appending(path: \.sound)))
-                IntField(label: "Veces que suena", value: model.int("\(s).repeticiones_sonido", kp.appending(path: \.rings)), unit: "")
+                IntField(label: "Veces que suena", value: model.int("\(s).repeticiones_sonido", kp.appending(path: \.rings)), unit: "veces")
             }
             .disabled(!model.cfg[keyPath: kp].enabled)
+        } header: {
+            HStack {
+                Text(title)
+                Spacer()
+                Button("Probar") { model.test?(k) }.controlSize(.small)
+            }
         }
     }
 }

@@ -5,6 +5,8 @@
 #
 # Sonidos: cualquier nombre de /System/Library/Sounds (Sosumi, Hero, Pop, Glass, Ping, Tink...)
 # o "" para que no suene nada.
+#
+# Textos: sin emoji (ver design/README.md). En los banners, lo que va después de " · " sale en gris.
 
 # Pausa corta: descansar la vista
 vista:
@@ -12,9 +14,9 @@ vista:
   cada_minutos: 20
   duracion_segundos: 20
   aviso_previo_segundos: 3          # cuenta regresiva arriba antes de arrancar (0 = arranca directo)
-  aviso_previo_texto: "👀  Pausa corta en {s}"
-  titulo: "👀  Mirá algo lejos"
-  subtitulo: "Algo a unos 6 metros, sin mirar la pantalla."
+  aviso_previo_texto: "Pausa corta en {s}"
+  titulo: "Mirá algo lejos"
+  subtitulo: "Algo a unos 6 metros. Dejá descansar la vista."
   sonido: Sosumi
   repeticiones_sonido: 1
 
@@ -24,8 +26,8 @@ pararse:
   cada_minutos: 60
   duracion_segundos: 300
   aviso_previo_segundos: 10
-  aviso_previo_texto: "🧍  Pausa larga en {s}"
-  titulo: "🧍  Pará. Levantate."
+  aviso_previo_texto: "Pausa larga en {s}"
+  titulo: "Levantate"
   subtitulo: "Caminá, estirate, tomá agua."
   sonido: Sosumi
   repeticiones_sonido: 3
@@ -35,10 +37,10 @@ posponer:
   minutos: 5
   maximo_veces: 3                   # seguidas, para la misma pausa (0 = sin límite)
   mostrar_banner: true              # cartel arriba mientras la pausa está pospuesta
-  texto_banner: "⏸  Pausa pospuesta, activala apenas puedas · vuelve en {t}"
+  texto_banner: "Pausa pospuesta · vuelve en {t}"
 
 pantalla:
-  opacidad: 0.88                    # de 0 a 1
+  opacidad: 0.94                    # de 0 a 1
   permitir_saltar: false            # botón "Saltar" y tecla Esc
   sonido_fin: Hero
 
@@ -52,6 +54,6 @@ general:
 claude:
   activado: true                    # modo "Esperando a Claude"
   atajo: "cmd+esc"                  # cmd/ctrl/opt/shift + tecla (esc, space, return, tab, a-z, 0-9, f1-f12)
-  titulo: "☕  Esperando a Claude…"
+  titulo: "Claude está trabajando"
   subtitulo: "Mirá a otro lado. Te aviso cuando responda."
   sonido_al_responder: Pop          # cuando Claude termina y no estás en modo espera

@@ -90,6 +90,18 @@ func parseHotKey(_ s: String) -> HotKey? {
     return HotKey(code: UInt32(key.code), carbonMods: UInt32(mods), equivalent: key.equiv, mask: mask)
 }
 
+// "cmd+esc" → "⌘ esc", para mostrar el atajo.
+func hotKeyLabel(_ s: String) -> String {
+    let names = ["cmd": "⌘", "command": "⌘", "ctrl": "⌃", "control": "⌃", "opt": "⌥", "option": "⌥", "alt": "⌥",
+                 "shift": "⇧", "esc": "esc", "escape": "esc", "space": "espacio", "return": "↩", "enter": "↩", "tab": "⇥"]
+    let parts = s.lowercased().split(separator: "+").map { names[$0.trimmingCharacters(in: .whitespaces)] ?? $0.uppercased() }
+    // Las teclas con nombre van separadas: "⌘ esc", "⌃⌥P".
+    return parts.reduce("") { out, p in out + (p.count > 1 && !out.isEmpty ? " " : "") + p }
+}
+
+// Duración corta para el eyebrow: "20 s", "5 min", "1:30".
+func span(_ s: Int) -> String { s < 60 ? "\(s) s" : s % 60 == 0 ? "\(s / 60) min" : clock(s) }
+
 // MARK: - Aviso a pantalla completa
 
 // Ventana sin bordes que igual puede recibir teclado (para el Esc).
@@ -97,27 +109,35 @@ final class KeyWindow: NSWindow {
     override var canBecomeKey: Bool { true }
 }
 
+// Pantalla de pausa (componente BreakScreen del design system): eyebrow, instrucción,
+// cuenta regresiva grande, barra de progreso y, si la config lo permite, posponer y saltar.
+// Con seconds = 0 es la espera de Claude: cuenta hacia arriba, sin barra.
 final class BreakOverlay {
+    var eyebrow = ""
     var titleText = ""
     var subText = ""
+    var hint: String?     // línea al pie (atajo para salir de la espera)
     var seconds = 0       // 0 = sin cuenta regresiva
     var rings = 0
     var sound = ""
     var endSound = ""
-    var opacity = 0.88
+    var opacity = 0.94
     var allowSkip = true
     var snoozeTitle: String?  // nil = sin botón de posponer
     private var windows: [NSWindow] = []
-    private var labels: [NSTextField] = []
+    private var timers: [NSTextField] = []
+    private var bars: [ProgressBar] = []
     private var timer: Timer?
     private var soundTimer: Timer?
     private var escMonitor: Any?
     private var remaining = 0
+    private var elapsed = 0
     var onFinish: (() -> Void)?
     var onSnooze: (() -> Void)?
     var isShowing: Bool { !windows.isEmpty }
 
-    func configure(_ c: BreakConfig, _ cfg: Config) {
+    func configure(_ c: BreakConfig, _ cfg: Config, eyebrow: String) {
+        self.eyebrow = eyebrow
         titleText = c.title
         subText = c.sub
         seconds = c.duration
@@ -130,51 +150,25 @@ final class BreakOverlay {
 
     func show() {
         remaining = seconds
+        elapsed = 0
         for screen in NSScreen.screens {
             let w = KeyWindow(contentRect: screen.frame, styleMask: .borderless,
                              backing: .buffered, defer: false, screen: screen)
             w.level = .screenSaver
             w.isOpaque = false
-            w.backgroundColor = NSColor.black.withAlphaComponent(opacity)
+            w.backgroundColor = Palette.restGround.withAlphaComponent(opacity)
             w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-
-            let title = NSTextField(labelWithString: titleText)
-            title.font = .systemFont(ofSize: 64, weight: .bold)
-            title.textColor = .white
-            let sub = NSTextField(labelWithString: subText)
-            sub.font = .systemFont(ofSize: 26)
-            sub.textColor = NSColor.white.withAlphaComponent(0.75)
-            let count = NSTextField(labelWithString: "")
-            count.font = .monospacedDigitSystemFont(ofSize: 48, weight: .medium)
-            count.textColor = .white
-            labels.append(count)
-
-            var buttons: [NSView] = []
-            if let t = snoozeTitle {
-                buttons.append(button(t, #selector(snooze)))
-            }
-            if allowSkip {
-                buttons.append(button("Saltar (Esc)", #selector(finish)))
-            }
-            let row = NSStackView(views: buttons)
-            row.orientation = .horizontal
-            row.spacing = 16
-
-            let stack = NSStackView(views: [title, sub, count, row])
-            stack.orientation = .vertical
-            stack.spacing = 24
-            stack.setCustomSpacing(60, after: count)
-            stack.translatesAutoresizingMaskIntoConstraints = false
-            let v = NSView(frame: screen.frame)
-            v.addSubview(stack)
-            NSLayoutConstraint.activate([
-                stack.centerXAnchor.constraint(equalTo: v.centerXAnchor),
-                stack.centerYAnchor.constraint(equalTo: v.centerYAnchor),
-            ])
-            w.contentView = v
-            w.alphaValue = 0
+            w.appearance = NSAppearance(named: .darkAqua)
+            w.contentView = content(screen.frame)
+            w.alphaValue = reduceMotion ? 1 : 0
             w.orderFrontRegardless()
-            w.animator().alphaValue = 1
+            if !reduceMotion {
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.4
+                    ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0, 0, 1)
+                    w.animator().alphaValue = 1
+                }
+            }
             windows.append(w)
         }
         NSApp.activate(ignoringOtherApps: true)
@@ -188,12 +182,15 @@ final class BreakOverlay {
         }
         update()
 
-        if seconds > 0 {
-            timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-                guard let self else { return }
-                self.remaining -= 1
-                if self.remaining <= 0 { self.finish() } else { self.update() }
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            if self.seconds == 0 {
+                self.elapsed += 1
+                self.update()
+                return
             }
+            self.remaining -= 1
+            if self.remaining <= 0 { self.finish() } else { self.update() }
         }
 
         guard rings > 0 else { return }
@@ -207,16 +204,71 @@ final class BreakOverlay {
         }
     }
 
-    private func button(_ title: String, _ action: Selector) -> NSButton {
-        let b = NSButton(title: title, target: self, action: action)
-        b.bezelStyle = .rounded
-        b.controlSize = .large
-        return b
+    // Lo que se ve en cada pantalla.
+    func content(_ frame: NSRect) -> NSView {
+        let top = label(eyebrow.uppercased(), .systemFont(ofSize: 13, weight: .semibold), Palette.restMuted, kern: 1.1)
+        let title = label(titleText, .systemFont(ofSize: 40, weight: .semibold), Palette.restInk)
+        let sub = label(subText, .systemFont(ofSize: 19), Palette.restMuted)
+        let countUp = seconds == 0
+        let count = label("", .monospacedDigitSystemFont(ofSize: countUp ? 96 : 128, weight: .thin),
+                          countUp ? Palette.restMuted : Palette.restInk)
+        timers.append(count)
+
+        var views: [NSView] = [top, title, sub, count]
+        if !countUp {
+            let bar = ProgressBar()
+            bars.append(bar)
+            views.append(bar)
+        }
+        var buttons: [NSView] = []
+        if let t = snoozeTitle {
+            buttons.append(PillButton(t, style: .secondary, onRest: true, large: true) { [weak self] in self?.snooze() })
+        }
+        if allowSkip && !countUp {
+            buttons.append(PillButton("Saltar", key: "esc", style: .quiet, onRest: true, large: true) { [weak self] in self?.finish() })
+        }
+        if !buttons.isEmpty {
+            let row = NSStackView(views: buttons)
+            row.orientation = .horizontal
+            row.spacing = Space.s4
+            views.append(row)
+        }
+
+        let stack = NSStackView(views: views)
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = Space.s2
+        stack.setCustomSpacing(Space.s3, after: top)
+        stack.setCustomSpacing(Space.s12, after: sub)
+        stack.setCustomSpacing(Space.s6, after: count)
+        if let bar = bars.last, !countUp { stack.setCustomSpacing(Space.s16, after: bar) }
+        if countUp { stack.setCustomSpacing(Space.s16, after: count) }
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        let v = NSView(frame: frame)
+        v.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: v.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: v.centerYAnchor),
+        ])
+        if let hint {
+            let h = label(hint, .systemFont(ofSize: 13), Palette.restMuted)
+            h.translatesAutoresizingMaskIntoConstraints = false
+            v.addSubview(h)
+            NSLayoutConstraint.activate([
+                h.centerXAnchor.constraint(equalTo: v.centerXAnchor),
+                h.bottomAnchor.constraint(equalTo: v.bottomAnchor, constant: -Space.s8),
+            ])
+        }
+        return v
     }
 
     private func update() {
-        guard seconds > 0 else { return }
-        labels.forEach { $0.stringValue = clock(remaining) }
+        if seconds == 0 {
+            timers.forEach { $0.stringValue = clock(elapsed) }
+            return
+        }
+        timers.forEach { $0.stringValue = clock(remaining) }
+        bars.forEach { $0.fraction = CGFloat(seconds - remaining) / CGFloat(seconds) }
     }
 
     private func close() -> Bool {
@@ -224,9 +276,18 @@ final class BreakOverlay {
         timer?.invalidate()
         soundTimer?.invalidate()
         if let m = escMonitor { NSEvent.removeMonitor(m); escMonitor = nil }
-        windows.forEach { $0.orderOut(nil) }
+        let closing = windows
         windows.removeAll()
-        labels.removeAll()
+        timers.removeAll()
+        bars.removeAll()
+        if reduceMotion {
+            closing.forEach { $0.orderOut(nil) }
+        } else {
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.25
+                closing.forEach { $0.animator().alphaValue = 0 }
+            }, completionHandler: { closing.forEach { $0.orderOut(nil) } })
+        }
         return true
     }
 
@@ -244,37 +305,51 @@ final class BreakOverlay {
 
 // MARK: - Banner
 
-// Cartelito arriba al centro que no roba el foco: cuenta regresiva y "pausa pospuesta".
+// Cartelito arriba al centro que no roba el foco (componente Banner del design system):
+// ícono de estado, texto y botones. Lo que va después del primer " · " sale en gris.
 final class Banner: NSObject {
     private var panel: NSPanel?
-    private let label = NSTextField(labelWithString: "")
-    private var actions: [() -> Void] = []
+    private let main = label("", .systemFont(ofSize: 14, weight: .medium), Palette.ink)
+    private let detail = label("", .systemFont(ofSize: 14, weight: .medium), Palette.inkMuted)
     var isShowing: Bool { panel != nil }
 
-    func show(_ text: String, buttons: [(String, () -> Void)]) {
+    func show(_ text: String, symbol name: String, tint: NSColor? = nil,
+              buttons: [(String, PillButton.Style, () -> Void)]) {
         hide()
-        label.stringValue = text
-        label.font = .monospacedDigitSystemFont(ofSize: 15, weight: .semibold)
-        label.textColor = .white
-        actions = buttons.map(\.1)
-        let views: [NSView] = [label] + buttons.enumerated().map { i, b in
-            let btn = NSButton(title: b.0, target: self, action: #selector(tapped(_:)))
-            btn.bezelStyle = .rounded
-            btn.tag = i
-            return btn
+        setLabels(text)
+        main.font = .monospacedDigitSystemFont(ofSize: 14, weight: .medium)
+        detail.font = .monospacedDigitSystemFont(ofSize: 14, weight: .medium)
+        let icon = NSImageView(image: symbol(name, size: 15, color: tint) ?? NSImage())
+        icon.contentTintColor = Palette.ink
+
+        let text = NSStackView(views: [icon, main, detail])
+        text.orientation = .horizontal
+        text.spacing = Space.s2
+        var views: [NSView] = [text]
+        if !buttons.isEmpty {
+            let row = NSStackView(views: buttons.map { b in
+                PillButton(b.0, style: b.1, onRest: false) { [weak self] in
+                    guard self != nil else { return }
+                    b.2()
+                }
+            })
+            row.orientation = .horizontal
+            row.spacing = Space.s2
+            views.append(row)
         }
         let stack = NSStackView(views: views)
         stack.orientation = .horizontal
-        stack.spacing = 12
-        stack.edgeInsets = NSEdgeInsets(top: 10, left: 18, bottom: 10, right: 12)
+        stack.spacing = Space.s3 + Space.s2
+        stack.edgeInsets = NSEdgeInsets(top: Space.s2, left: Space.s4, bottom: Space.s2,
+                                        right: buttons.isEmpty ? Space.s4 : Space.s2)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let bg = NSVisualEffectView()
-        bg.material = .hudWindow
+        bg.material = .popover
         bg.blendingMode = .behindWindow
         bg.state = .active
         bg.wantsLayer = true
-        bg.layer?.cornerRadius = 12
+        bg.layer?.cornerRadius = 14
         bg.layer?.masksToBounds = true
         bg.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -282,6 +357,7 @@ final class Banner: NSObject {
             stack.trailingAnchor.constraint(equalTo: bg.trailingAnchor),
             stack.topAnchor.constraint(equalTo: bg.topAnchor),
             stack.bottomAnchor.constraint(equalTo: bg.bottomAnchor),
+            bg.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
 
         let p = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
@@ -295,34 +371,40 @@ final class Banner: NSObject {
         p.contentView = bg
         panel = p
         layout()
-        p.alphaValue = 0
+        p.alphaValue = reduceMotion ? 1 : 0
         p.orderFrontRegardless()
-        p.animator().alphaValue = 1
+        if !reduceMotion {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.2
+                p.animator().alphaValue = 1
+            }
+        }
     }
 
     func setText(_ text: String) {
-        guard label.stringValue != text else { return }
-        label.stringValue = text
-        layout()
+        let before = main.stringValue + detail.stringValue
+        setLabels(text)
+        if main.stringValue + detail.stringValue != before { layout() }
+    }
+
+    private func setLabels(_ text: String) {
+        let parts = text.components(separatedBy: " · ")
+        main.stringValue = parts[0]
+        detail.stringValue = parts.dropFirst().joined(separator: " · ")
+        detail.isHidden = detail.stringValue.isEmpty
     }
 
     func hide() {
         panel?.orderOut(nil)
         panel = nil
-        actions = []
     }
 
     private func layout() {
         guard let p = panel, let v = p.contentView, let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let size = v.fittingSize
         let vf = screen.visibleFrame
-        p.setFrame(NSRect(x: vf.midX - size.width / 2, y: vf.maxY - size.height - 12,
+        p.setFrame(NSRect(x: vf.midX - size.width / 2, y: vf.maxY - size.height - Space.s4,
                           width: size.width, height: size.height), display: true)
-    }
-
-    @objc private func tapped(_ sender: NSButton) {
-        let action = actions[sender.tag]
-        action()
     }
 }
 
@@ -354,7 +436,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let warnBanner = Banner()
     private let snoozeBanner = Banner()
     private var hotKey: EventHotKeyRef?
-    private let problemItem = NSMenuItem(title: "⚠️ Revisá config.yml", action: nil, keyEquivalent: "")
+    private let statusInfoItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let problemItem = NSMenuItem(title: "Revisá config.yml", action: nil, keyEquivalent: "")
     private let pauseItem = NSMenuItem(title: "Pausar", action: #selector(togglePause), keyEquivalent: "p")
     private let waitItem = NSMenuItem(title: "Esperar a Claude", action: #selector(toggleWait), keyEquivalent: "")
     private var settingsWindow: NSWindow?
@@ -375,10 +458,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        statusItem.button?.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
 
         let menu = NSMenu()
+        menu.addItem(statusInfoItem)
         menu.addItem(problemItem)
+        menu.addItem(.separator())
         menu.addItem(pauseItem)
         menu.addItem(NSMenuItem(title: "Reiniciar contador", action: #selector(reset), keyEquivalent: "r"))
         menu.addItem(waitItem)
@@ -389,13 +474,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(leaveItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Configuración…", action: #selector(openSettings), keyEquivalent: ","))
-        menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Probar aviso de vista", action: #selector(testEye), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Probar aviso de pararse", action: #selector(testStand), keyEquivalent: ""))
-        menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Salir", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Salir de Pausa", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         menu.items.forEach { if $0.action != #selector(NSApplication.terminate(_:)) { $0.target = self } }
+        statusInfoItem.isEnabled = false
         syncInfoItem.isEnabled = false
+        syncInfoItem.image = symbol("person.2")
+        problemItem.image = symbol("exclamationmark.triangle", color: Palette.danger)
         findItem.submenu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
@@ -437,8 +521,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func applyConfig() {
-        eyeOverlay.configure(cfg.eye, cfg)
-        standOverlay.configure(cfg.stand, cfg)
+        eyeOverlay.configure(cfg.eye, cfg, eyebrow: "Pausa corta · \(span(cfg.eye.duration))")
+        standOverlay.configure(cfg.stand, cfg, eyebrow: "Pausa larga · \(span(cfg.stand.duration))")
+        waitOverlay.eyebrow = "En espera"
+        waitOverlay.hint = "\(hotKeyLabel(cfg.claudeHotKey)) para volver"
         waitOverlay.titleText = cfg.claudeTitle
         waitOverlay.subText = cfg.claudeSub
         waitOverlay.endSound = cfg.endSound
@@ -506,9 +592,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard c.warning > 0 else { beginBreak(k); return }
         warning = k
         warnLeft = c.warning
-        var buttons: [(String, () -> Void)] = [("Empezar ya", { [weak self] in self?.beginBreak(k) })]
-        if canSnooze { buttons.insert((snoozeLabel, { [weak self] in self?.snooze(k) }), at: 0) }
-        warnBanner.show(warnText(k), buttons: buttons)
+        var buttons: [(String, PillButton.Style, () -> Void)] = [("Empezar ahora", .quiet, { [weak self] in self?.beginBreak(k) })]
+        if canSnooze { buttons.insert((snoozeLabel, .secondary, { [weak self] in self?.snooze(k) }), at: 0) }
+        warnBanner.show(warnText(k), symbol: icon(k), buttons: buttons)
         refresh()
     }
 
@@ -555,24 +641,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         waitItem.isHidden = !cfg.claudeEnabled
         updateSnoozeBanner()
         updateSyncMenu()
-        statusItem.button?.title = sync == .solo ? statusTitle() : "🔗 " + statusTitle()
+        let st = status()
+        statusInfoItem.title = st.long
+        statusInfoItem.image = symbol(st.icon, color: st.tint)
+        var img = symbol(st.icon, size: 13, color: sync == .solo ? st.tint : nil)
+        if sync != .solo, let i = img, let people = symbol("person.2", size: 13) { img = joined(people, i) }
+        statusItem.button?.image = img
+        statusItem.button?.title = st.short
+        statusItem.button?.imagePosition = st.short.isEmpty ? .imageOnly : .imageLeading
     }
 
-    private func statusTitle() -> String {
-        if paused { return "⏸" }
-        if waitOverlay.isShowing { return "☕" }
-        if let k = warning { return "\(k == .stand ? "🧍" : "👀") \(warnLeft)" }
-        if let k = current { return k == .stand ? "🧍 ahora" : "👀 ahora" }
-        if inMeeting && pending != nil && snoozeLeft == 0 { return "📞 después" }
-        if snoozeLeft > 0 { return cfg.showCountdown ? "💤 \(clock(snoozeLeft))" : "💤" }
+    private func icon(_ k: Kind) -> String { k == .stand ? "figure.walk" : "eye" }
+    private func name(_ k: Kind) -> String { k == .stand ? "Pausa larga" : "Pausa corta" }
+
+    // Estado para la barra de menú (componente MenuBarItem) y la primera línea del menú.
+    private func status() -> (icon: String, short: String, long: String, tint: NSColor?) {
+        if paused { return ("pause", "", "Pausado", nil) }
+        if waitOverlay.isShowing { return ("hourglass", "", "Esperando a Claude", nil) }
+        if let k = warning { return (icon(k), "\(warnLeft)", "\(name(k)) en \(warnLeft)", nil) }
+        if let k = current { return (icon(k), "ahora", "\(name(k)) ahora", nil) }
+        if inMeeting && pending != nil && snoozeLeft == 0 { return ("phone", "después", "En reunión · la pausa espera", nil) }
+        if snoozeLeft > 0 {
+            return ("moon.zzz", cfg.showCountdown ? clock(snoozeLeft) : "", "Pospuesta · vuelve en \(clock(snoozeLeft))", Palette.amber)
+        }
         var next: (Kind, Int)?
         if cfg.eye.enabled { next = (.eye, cfg.eye.every - sinceEye) }
         if cfg.stand.enabled, cfg.stand.every - sinceStand <= next?.1 ?? .max {
             next = (.stand, cfg.stand.every - sinceStand)
         }
-        guard let (k, left) = next else { return "😌" }  // todo apagado
-        let icon = inMeeting ? "📞" : (k == .stand ? "🧍" : "👁")
-        return cfg.showCountdown ? "\(icon) \(clock(max(left, 0)))" : icon
+        guard let (k, left) = next else { return ("eye.slash", "", "Todo apagado", nil) }
+        let t = clock(max(left, 0))
+        let long = "\(name(k)) en \(t)"
+        if inMeeting { return ("phone", cfg.showCountdown ? t : "", "En reunión · " + long.lowercased(), nil) }
+        return (icon(k), cfg.showCountdown ? t : "", long, nil)
     }
 
     private func updateSnoozeBanner() {
@@ -581,7 +682,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if snoozeBanner.isShowing {
             snoozeBanner.setText(text)
         } else {
-            snoozeBanner.show(text, buttons: [("Empezar ahora", { [weak self] in self?.startPendingNow() })])
+            snoozeBanner.show(text, symbol: "moon.zzz", tint: Palette.amber,
+                              buttons: [("Empezar ahora", .primary, { [weak self] in self?.startPendingNow() })])
         }
     }
 
@@ -671,7 +773,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let giveUp = { [weak self, weak p] in
             guard let self, let p, self.guest === p, !self.guestConnected else { return }
             self.leaveSession()
-            self.flash("No se pudo entrar a la jam. Revisá Configuración del Sistema → Privacidad y seguridad → Red local → Pausa")
+            self.flash("No se pudo entrar a la jam. · Prendé Pausa en Ajustes del Sistema › Privacidad y seguridad › Red local.")
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { giveUp() }
         p.start()
@@ -697,7 +799,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func flash(_ text: String) {
-        infoBanner.show(text, buttons: [])
+        infoBanner.show(text, symbol: "exclamationmark.triangle", tint: Palette.danger, buttons: [])
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.infoBanner.hide() }
     }
 
@@ -712,11 +814,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .hosting:
             let names = host?.peers.map(\.name).filter { !$0.isEmpty } ?? []
             let n = host?.peers.count ?? 0
-            syncInfoItem.title = n == 0 ? "🔗 Tu jam · esperando a que se unan"
-                : "🔗 Tu jam con \(n): " + (names.isEmpty ? "\(n) conectados" : names.joined(separator: ", "))
+            syncInfoItem.title = n == 0 ? "Tu jam · esperando a que se unan"
+                : "Tu jam con \(n): " + (names.isEmpty ? "\(n) conectados" : names.joined(separator: ", "))
             syncInfoItem.isHidden = false
         case .joined(let name):
-            syncInfoItem.title = guestConnected ? "🔗 Estás en: \(name)" : "🔗 Entrando a \(name)…"
+            syncInfoItem.title = guestConnected ? "Estás en: \(name)" : "Entrando a \(name)…"
             syncInfoItem.isHidden = false
         }
     }
@@ -798,6 +900,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func openSettings() {
         if settingsWindow == nil {
             let model = SettingsModel(fileCfg)
+            model.test = { [weak self] k in if self?.inBreak == false { self?.announce(k) } }
             settingsModel = model
             settingsWindow = makeSettingsWindow(model)
         }
@@ -832,8 +935,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cancelWarning()
         refresh()
     }
-    @objc private func testEye() { if !inBreak { announce(.eye) } }
-    @objc private func testStand() { if !inBreak { announce(.stand) } }
 }
 
 let app = NSApplication.shared

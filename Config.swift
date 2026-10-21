@@ -161,16 +161,16 @@ struct Config {
                         sound: v.string("\(s).sonido", "Sosumi"),
                         rings: v.int("\(s).repeticiones_sonido", rings))
         }
-        eye = brk("vista", every: 20, duration: 20, warning: 3, warningText: "👀  Pausa corta en {s}",
-                  title: "👀  Mirá algo lejos", sub: "Algo a unos 6 metros, sin mirar la pantalla.", rings: 1)
-        stand = brk("pararse", every: 60, duration: 300, warning: 10, warningText: "🧍  Pausa larga en {s}",
-                    title: "🧍  Pará. Levantate.", sub: "Caminá, estirate, tomá agua.", rings: 3)
+        eye = brk("vista", every: 20, duration: 20, warning: 3, warningText: "Pausa corta en {s}",
+                  title: "Mirá algo lejos", sub: "Algo a unos 6 metros. Dejá descansar la vista.", rings: 1)
+        stand = brk("pararse", every: 60, duration: 300, warning: 10, warningText: "Pausa larga en {s}",
+                    title: "Levantate", sub: "Caminá, estirate, tomá agua.", rings: 3)
         snoozeEnabled = v.bool("posponer.activado", true)
         snoozeSeconds = v.minutes("posponer.minutos", 5)
         snoozeMax = v.int("posponer.maximo_veces", 3)
         snoozeBanner = v.bool("posponer.mostrar_banner", true)
-        snoozeText = v.string("posponer.texto_banner", "⏸  Pausa pospuesta, activala apenas puedas · vuelve en {t}")
-        opacity = v.double("pantalla.opacidad", 0.88, 0...1)
+        snoozeText = v.string("posponer.texto_banner", "Pausa pospuesta · vuelve en {t}")
+        opacity = v.double("pantalla.opacidad", 0.94, 0...1)
         allowSkip = v.bool("pantalla.permitir_saltar", false)
         endSound = v.string("pantalla.sonido_fin", "Hero")
         waitForMeetings = v.bool("reuniones.esperar_si_hay_microfono", true)
@@ -178,11 +178,18 @@ struct Config {
         showCountdown = v.bool("general.mostrar_contador", true)
         claudeEnabled = v.bool("claude.activado", true)
         claudeHotKey = v.string("claude.atajo", "cmd+esc")
-        claudeTitle = v.string("claude.titulo", "☕  Esperando a Claude…")
+        claudeTitle = v.string("claude.titulo", "Claude está trabajando")
         claudeSub = v.string("claude.subtitulo", "Mirá a otro lado. Te aviso cuando responda.")
         claudeDoneSound = v.string("claude.sonido_al_responder", "Pop")
     }
 }
+
+// Textos por defecto de antes del design system.
+private let legacyTexts: Set<String> = [
+    "👀  Pausa corta en {s}", "👀  Mirá algo lejos", "Algo a unos 6 metros, sin mirar la pantalla.",
+    "🧍  Pausa larga en {s}", "🧍  Pará. Levantate.",
+    "⏸  Pausa pospuesta, activala apenas puedas · vuelve en {t}", "☕  Esperando a Claude…",
+]
 
 // Lectura tipada con valor por defecto; anota qué claves se usaron y cuáles vinieron mal.
 private final class Values {
@@ -195,7 +202,11 @@ private final class Values {
     private func get(_ k: String) -> String? { used.insert(k); return raw[k] }
     private func bad(_ k: String, _ v: String) { problems.append("Valor inválido en \(k): \(v)") }
 
-    func string(_ k: String, _ d: String) -> String { get(k) ?? d }
+    // Un texto que quedó igual al default viejo (con emoji) en un config.yml anterior toma el nuevo.
+    func string(_ k: String, _ d: String) -> String {
+        guard let v = get(k) else { return d }
+        return legacyTexts.contains(v) ? d : v
+    }
 
     func bool(_ k: String, _ d: Bool) -> Bool {
         guard let v = get(k) else { return d }
