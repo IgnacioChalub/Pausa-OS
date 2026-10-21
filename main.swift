@@ -152,8 +152,11 @@ final class BreakOverlay {
         remaining = seconds
         elapsed = 0
         for screen in NSScreen.screens {
-            let w = KeyWindow(contentRect: screen.frame, styleMask: .borderless,
+            // Con `screen:` el contentRect es relativo a esa pantalla: pasarle screen.frame (global)
+            // manda la ventana fuera de las pantallas secundarias. Se crea en el origen y se ubica después.
+            let w = KeyWindow(contentRect: NSRect(origin: .zero, size: screen.frame.size), styleMask: .borderless,
                              backing: .buffered, defer: false, screen: screen)
+            w.setFrame(screen.frame, display: false)
             w.level = .screenSaver
             w.isOpaque = false
             w.backgroundColor = Palette.restGround.withAlphaComponent(opacity)
