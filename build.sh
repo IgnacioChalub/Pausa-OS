@@ -22,5 +22,14 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>NSBonjourServices</key><array><string>_pausa._tcp</string></array>
 </dict></plist>
 PLIST
-codesign -s - --force "$APP"
+# Firmar con una identidad estable. Con firma ad-hoc macOS identifica la app por el hash
+# del binario, que cambia en cada build, y se olvida de los permisos (Red local).
+# PAUSA_SIGN elige otra identidad; si no hay ninguna, queda ad-hoc como antes.
+IDENTITY=${PAUSA_SIGN:-$(security find-identity -v -p codesigning | awk '/Apple Development/ {print $2; exit}')}
+if [[ -n $IDENTITY ]]; then
+  codesign -s "$IDENTITY" --force "$APP"
+else
+  echo "Aviso: no hay identidad de firma (Apple Development); firmo ad-hoc y macOS va a volver a pedir el permiso de Red local en cada build."
+  codesign -s - --force "$APP"
+fi
 echo "OK: $APP"

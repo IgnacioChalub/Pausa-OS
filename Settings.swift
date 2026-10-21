@@ -107,6 +107,8 @@ struct SettingsView: View {
                        isOn: model.bool("general.reiniciar_al_despertar", \.resetOnWake))
                 Toggle("Mostrar el tiempo en la barra de menú",
                        isOn: model.bool("general.mostrar_contador", \.showCountdown))
+                Toggle("Después de una pausa, esperar a que muevas el mouse o toques una tecla",
+                       isOn: model.bool("general.retomar_al_volver", \.resumeOnActivity))
             }
 
             Section("Claude") {

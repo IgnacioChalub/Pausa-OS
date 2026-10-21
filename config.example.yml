@@ -50,6 +50,7 @@ reuniones:
 general:
   reiniciar_al_despertar: true      # al despertar o desbloquear la Mac, el contador arranca de cero
   mostrar_contador: true            # tiempo restante en la barra de menú (false = solo el ícono)
+  retomar_al_volver: true           # después de una pausa, el contador espera a que muevas el mouse o toques una tecla
 
 claude:
   activado: true                    # modo "Esperando a Claude"

@@ -92,6 +92,7 @@ struct Config {
     var waitForMeetings: Bool
     var resetOnWake: Bool
     var showCountdown: Bool
+    var resumeOnActivity: Bool
     var claudeEnabled: Bool
     var claudeHotKey: String
     var claudeTitle: String
@@ -176,6 +177,7 @@ struct Config {
         waitForMeetings = v.bool("reuniones.esperar_si_hay_microfono", true)
         resetOnWake = v.bool("general.reiniciar_al_despertar", true)
         showCountdown = v.bool("general.mostrar_contador", true)
+        resumeOnActivity = v.bool("general.retomar_al_volver", true)
         claudeEnabled = v.bool("claude.activado", true)
         claudeHotKey = v.string("claude.atajo", "cmd+esc")
         claudeTitle = v.string("claude.titulo", "Claude está trabajando")

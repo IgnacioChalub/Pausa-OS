@@ -20,6 +20,11 @@ func play(_ sound: String) {
 
 func clock(_ s: Int) -> String { String(format: "%d:%02d", s / 60, s % 60) }
 
+// Segundos desde el último movimiento de mouse, click o tecla (no necesita permiso de Accesibilidad).
+func idleSeconds() -> TimeInterval {
+    CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+}
+
 // MARK: - Reuniones
 
 // Estás en reunión si alguna app está usando el micrófono (Zoom, Meet, Teams, Slack...).
@@ -432,6 +437,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var warning: Kind?     // cuenta regresiva previa en curso
     private var warnLeft = 0
     private var current: Kind?     // pausa en pantalla
+    private var awaitingReturn: Date?  // terminó una pausa y todavía no tocaste nada
     private var inBreak: Bool { warning != nil || current != nil || waitOverlay.isShowing }
     private let eyeOverlay = BreakOverlay()
     private let standOverlay = BreakOverlay()
@@ -505,6 +511,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self, selector: #selector(claudeDone), name: claudeDoneNotification, object: nil)
         installHotKeyHandler()
 
+        restoreCounters()
         applyConfig()
         tick = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.step() }
         RunLoop.main.add(tick!, forMode: .common)
@@ -551,6 +558,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: Ciclo
 
     private func step() {
+        defer { saveCounters() }
         reloadConfigIfChanged()
         if sync == .hosting { hostTick() }  // el reloj del grupo corre aunque vos estés en pausa
         guard !paused else { return }
@@ -561,6 +569,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         guard !inBreak else { return }
+        if sync != .solo || !cfg.resumeOnActivity { awaitingReturn = nil }
+        if let end = awaitingReturn {
+            // Sin mouse ni teclado desde que terminó la pausa: seguís afuera, el contador no corre.
+            guard idleSeconds() < Date().timeIntervalSince(end) else { refresh(); return }
+            awaitingReturn = nil
+        }
         if snoozeLeft > 0 { snoozeLeft -= 1 }
         // En reunión el contador sigue, pero los avisos esperan a que cortes.
         inMeeting = cfg.waitForMeetings && micInUse()
@@ -576,6 +590,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if let k = pending, snoozeLeft == 0, !inMeeting { announce(k) }
         refresh()
+    }
+
+    // Los contadores sobreviven a un reinicio de la app (un build nuevo, por ejemplo).
+    // El rato que estuvo cerrada cuenta como pantalla; si fueron más de 5 min, se toma como descanso.
+    private func saveCounters() {
+        let d = UserDefaults.standard
+        d.set(sinceEye, forKey: "sinceEye")
+        d.set(sinceStand, forKey: "sinceStand")
+        d.set(Date().timeIntervalSince1970, forKey: "countersSavedAt")
+    }
+
+    private func restoreCounters() {
+        let d = UserDefaults.standard
+        guard let at = d.object(forKey: "countersSavedAt") as? Double else { return }
+        let gap = Int(Date().timeIntervalSince1970 - at)
+        guard (0..<5 * 60).contains(gap) else { return }
+        sinceEye = d.integer(forKey: "sinceEye") + gap
+        sinceStand = d.integer(forKey: "sinceStand") + gap
     }
 
     private var canSnooze: Bool { cfg.snoozeEnabled && (cfg.snoozeMax == 0 || snoozes < cfg.snoozeMax) }
@@ -628,6 +660,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         snoozeLeft = 0
         sinceEye = 0
         if k == .stand { sinceStand = 0 }
+        // Sincronizado manda el reloj del grupo, así que no tiene sentido esperar.
+        if cfg.resumeOnActivity && sync == .solo { awaitingReturn = Date() }
         refresh()
     }
 
@@ -664,6 +698,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let k = warning { return (icon(k), "\(warnLeft)", "\(name(k)) en \(warnLeft)", nil) }
         if let k = current { return (icon(k), "ahora", "\(name(k)) ahora", nil) }
         if inMeeting && pending != nil && snoozeLeft == 0 { return ("phone", "después", "En reunión · la pausa espera", nil) }
+        if awaitingReturn != nil {
+            return ("cursorarrow.motionlines", "", "Esperando que vuelvas · arranca al mover el mouse", nil)
+        }
         if snoozeLeft > 0 {
             return ("moon.zzz", cfg.showCountdown ? clock(snoozeLeft) : "", "Pospuesta · vuelve en \(clock(snoozeLeft))", Palette.amber)
         }
@@ -935,6 +972,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         pending = nil
         snoozeLeft = 0
         snoozes = 0
+        awaitingReturn = nil
         cancelWarning()
         refresh()
     }
