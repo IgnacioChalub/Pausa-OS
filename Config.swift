@@ -171,7 +171,7 @@ struct Config {
         snoozeBanner = v.bool("posponer.mostrar_banner", true)
         snoozeText = v.string("posponer.texto_banner", "⏸  Pausa pospuesta, activala apenas puedas · vuelve en {t}")
         opacity = v.double("pantalla.opacidad", 0.88, 0...1)
-        allowSkip = v.bool("pantalla.permitir_saltar", true)
+        allowSkip = v.bool("pantalla.permitir_saltar", false)
         endSound = v.string("pantalla.sonido_fin", "Hero")
         waitForMeetings = v.bool("reuniones.esperar_si_hay_microfono", true)
         resetOnWake = v.bool("general.reiniciar_al_despertar", true)

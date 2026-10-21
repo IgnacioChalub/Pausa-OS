@@ -39,7 +39,7 @@ posponer:
 
 pantalla:
   opacidad: 0.88                    # de 0 a 1
-  permitir_saltar: true             # botón "Saltar" y tecla Esc
+  permitir_saltar: false            # botón "Saltar" y tecla Esc
   sonido_fin: Hero
 
 reuniones:

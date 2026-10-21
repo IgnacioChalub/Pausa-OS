@@ -6,7 +6,7 @@ App de barra de menú para macOS que te recuerda descansar la vista y pararte.
 - **Cada 1 hora:** pantalla completa "🧍 Pará. Levantate." por 5 minutos.
 - **Antes de cada pausa** aparece una cuenta regresiva arriba: 3 segundos para la corta, 10 para la larga.
 - **Posponer:** desde la cuenta regresiva o desde la pausa. Mientras está pospuesta queda un cartel arriba ("Pausa pospuesta, activala apenas puedas") con un botón para empezarla ya.
-- **Esc** cierra cualquier aviso.
+- **Saltar** (botón y Esc) viene apagado: las pausas no se pueden cortar. Se prende en Configuración → Pantalla.
 - **En reuniones** (alguna app usando el micrófono) los avisos esperan a que cortes.
 - **Cmd+Esc:** modo "Esperando a Claude", pantalla negra hasta que Claude Code termina de responder.
 - Suena un "pop" cada vez que Claude Code termina de responder.
