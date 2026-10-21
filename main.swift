@@ -353,11 +353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKey: EventHotKeyRef?
     private let problemItem = NSMenuItem(title: "⚠️ Revisá config.yml", action: nil, keyEquivalent: "")
     private let pauseItem = NSMenuItem(title: "Pausar", action: #selector(togglePause), keyEquivalent: "p")
-    private let eyeItem = NSMenuItem(title: "Aviso de vista", action: #selector(toggleEye), keyEquivalent: "")
-    private let standItem = NSMenuItem(title: "Aviso de pararse", action: #selector(toggleStand), keyEquivalent: "")
-    private let snoozeItem = NSMenuItem(title: "Permitir posponer", action: #selector(toggleSnooze), keyEquivalent: "")
     private let waitItem = NSMenuItem(title: "Esperar a Claude", action: #selector(toggleWait), keyEquivalent: "")
-    private let noTimerItem = NSMenuItem(title: "Sin contador", action: #selector(toggleTimer), keyEquivalent: "")
     private var settingsWindow: NSWindow?
     private var settingsModel: SettingsModel?
 
@@ -371,10 +367,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Reiniciar contador", action: #selector(reset), keyEquivalent: "r"))
         menu.addItem(waitItem)
         menu.addItem(.separator())
-        menu.addItem(eyeItem)
-        menu.addItem(standItem)
-        menu.addItem(snoozeItem)
-        menu.addItem(noTimerItem)
         menu.addItem(NSMenuItem(title: "Configuración…", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Probar aviso de vista", action: #selector(testEye), keyEquivalent: ""))
@@ -440,11 +432,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         registerHotKey()
         settingsModel?.cfg = cfg
         refresh()
-    }
-
-    private func setConfig(_ path: String, _ value: Bool) {
-        Config.set(path, value ? "true" : "false")
-        reloadConfigIfChanged()
     }
 
     // MARK: Ciclo
@@ -536,10 +523,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func refresh() {
         pauseItem.title = paused ? "Reanudar" : "Pausar"
-        eyeItem.state = cfg.eye.enabled ? .on : .off
-        standItem.state = cfg.stand.enabled ? .on : .off
-        snoozeItem.state = cfg.snoozeEnabled ? .on : .off
-        noTimerItem.state = cfg.showCountdown ? .off : .on
         waitItem.isHidden = !cfg.claudeEnabled
         updateSnoozeBanner()
         statusItem.button?.title = statusTitle()
@@ -627,10 +610,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if paused { cancelWarning() }  // al reanudar, la pausa pendiente vuelve a avisar
         refresh()
     }
-    @objc private func toggleEye() { setConfig("vista.activado", !cfg.eye.enabled) }
-    @objc private func toggleStand() { setConfig("pararse.activado", !cfg.stand.enabled) }
-    @objc private func toggleSnooze() { setConfig("posponer.activado", !cfg.snoozeEnabled) }
-    @objc private func toggleTimer() { setConfig("general.mostrar_contador", !cfg.showCountdown) }
     @objc private func openSettings() {
         if settingsWindow == nil {
             let model = SettingsModel(cfg)
