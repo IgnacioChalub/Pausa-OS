@@ -11,12 +11,12 @@ App de barra de menú para macOS que te recuerda descansar la vista y pararte.
 - **Cmd+Esc:** modo "Esperando a Claude", pantalla negra hasta que Claude Code termina de responder.
 - Suena un "pop" cada vez que Claude Code termina de responder.
 
-## Sincronizar con otros
+## Jams: pausas en grupo
 
 Para hacer las pausas en grupo con gente en la misma red (wifi de la oficina, por ejemplo):
 
-1. Uno toca **Sincronizar** en el menú. Su Pausa se anuncia en la red como "Pausa de <su Mac>".
-2. Los demás van a **Buscar sincronización** y eligen esa sesión.
+1. Uno toca **Crear una jam** en el menú. Su jam se anuncia en la red como "Jam de <su Mac>".
+2. Los demás van a **Unirme a una jam** y la eligen.
 3. Todos pasan a usar el horario y las duraciones de quien la arrancó: la cuenta regresiva y las pausas aparecen a la vez en todas las Macs. En la barra de menú se ve 🔗.
 
 Posponer, pausar y las reuniones son de cada uno: si posponés, esa pausa la hacés solo y te volvés a enganchar en la siguiente. Si se corta la conexión o salís, volvés a tu horario normal.

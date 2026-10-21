@@ -18,7 +18,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleExecutable</key><string>Pausa</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>LSUIElement</key><true/>
-<key>NSLocalNetworkUsageDescription</key><string>Pausa busca y comparte sesiones de pausas sincronizadas en tu red.</string>
+<key>NSLocalNetworkUsageDescription</key><string>Pausa busca y crea jams de pausas en tu red.</string>
 <key>NSBonjourServices</key><array><string>_pausa._tcp</string></array>
 </dict></plist>
 PLIST

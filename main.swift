@@ -368,9 +368,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var session = SessionClock(eye: 0, stand: 0)
     private let browser = SyncBrowser()
     private let infoBanner = Banner()
-    private let syncItem = NSMenuItem(title: "Sincronizar", action: #selector(toggleHosting), keyEquivalent: "")
-    private let findItem = NSMenuItem(title: "Buscar sincronización", action: nil, keyEquivalent: "")
-    private let leaveItem = NSMenuItem(title: "Salir de la sincronización", action: #selector(leaveSession), keyEquivalent: "")
+    private let syncItem = NSMenuItem(title: "Crear una jam", action: #selector(toggleHosting), keyEquivalent: "")
+    private let findItem = NSMenuItem(title: "Unirme a una jam", action: nil, keyEquivalent: "")
+    private let leaveItem = NSMenuItem(title: "Salir de la jam", action: #selector(leaveSession), keyEquivalent: "")
     private let syncInfoItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -593,7 +593,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: Sincronización
 
-    private var sessionName: String { "Pausa de \(Host.current().localizedName ?? NSFullUserName())" }
+    private var sessionName: String { "Jam de \(Host.current().localizedName ?? NSFullUserName())" }
 
     private func hostTick() {
         let s = SyncSchedule(fileCfg)
@@ -636,12 +636,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         h.onChange = { [weak self] in self?.refresh() }
         h.onFail = { [weak self] in
             self?.stopHosting()
-            self?.flash("No se pudo compartir la sincronización en la red")
+            self?.flash("No se pudo crear la jam en la red")
         }
         do {
             try h.start(name: sessionName)
         } catch {
-            flash("No se pudo compartir la sincronización: \(error.localizedDescription)")
+            flash("No se pudo crear la jam: \(error.localizedDescription)")
             return
         }
         session = SessionClock(eye: sinceEye, stand: sinceStand)
@@ -665,7 +665,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         p.onMessage = { [weak self] m in self?.received(m) }
         p.onClose = { [weak self] in
             self?.endGuest()
-            self?.flash("Se cortó la sincronización con \(name)")
+            self?.flash("Se cortó la conexión con \(name)")
         }
         p.start()
         p.send(.hello(NSFullUserName()))
@@ -695,7 +695,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func updateSyncMenu() {
-        syncItem.title = sync == .hosting ? "Dejar de sincronizar" : "Sincronizar"
+        syncItem.title = sync == .hosting ? "Terminar la jam" : "Crear una jam"
         syncItem.isHidden = !(sync == .solo || sync == .hosting)
         findItem.isHidden = sync != .solo
         leaveItem.isHidden = { if case .joined = sync { return false }; return true }()
@@ -705,11 +705,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .hosting:
             let names = host?.peers.map(\.name).filter { !$0.isEmpty } ?? []
             let n = host?.peers.count ?? 0
-            syncInfoItem.title = n == 0 ? "🔗 Sincronizando · esperando a que se unan"
-                : "🔗 Sincronizando con \(n): " + (names.isEmpty ? "\(n) conectados" : names.joined(separator: ", "))
+            syncInfoItem.title = n == 0 ? "🔗 Tu jam · esperando a que se unan"
+                : "🔗 Tu jam con \(n): " + (names.isEmpty ? "\(n) conectados" : names.joined(separator: ", "))
             syncInfoItem.isHidden = false
         case .joined(let name):
-            syncInfoItem.title = guestConnected ? "🔗 Sincronizado con \(name)" : "🔗 Conectando a \(name)…"
+            syncInfoItem.title = guestConnected ? "🔗 Estás en: \(name)" : "🔗 Entrando a \(name)…"
             syncInfoItem.isHidden = false
         }
     }
@@ -727,7 +727,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let m = findItem.submenu else { return }
         m.removeAllItems()
         if browser.results.isEmpty {
-            let it = NSMenuItem(title: "Buscando en la red…", action: nil, keyEquivalent: "")
+            let it = NSMenuItem(title: "Buscando jams en la red…", action: nil, keyEquivalent: "")
             it.isEnabled = false
             m.addItem(it)
         }
