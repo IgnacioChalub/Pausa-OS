@@ -3,7 +3,7 @@ set -e
 cd "$(dirname "$0")"
 APP=~/Applications/Pausa.app
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-swiftc -O -swift-version 5 main.swift Config.swift Settings.swift -o "$APP/Contents/MacOS/Pausa"
+swiftc -O -swift-version 5 main.swift Config.swift Settings.swift Sync.swift -o "$APP/Contents/MacOS/Pausa"
 cp config.example.yml "$APP/Contents/Resources/"
 # config.yml es tuyo (no va a git): se arma del example la primera vez y la app lo lee por el symlink.
 [[ -f config.yml ]] || cp config.example.yml config.yml
@@ -18,6 +18,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleExecutable</key><string>Pausa</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>LSUIElement</key><true/>
+<key>NSLocalNetworkUsageDescription</key><string>Pausa busca y comparte sesiones de pausas sincronizadas en tu red.</string>
+<key>NSBonjourServices</key><array><string>_pausa._tcp</string></array>
 </dict></plist>
 PLIST
 codesign -s - --force "$APP"

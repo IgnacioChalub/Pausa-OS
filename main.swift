@@ -1,6 +1,7 @@
 import Cocoa
 import Carbon
 import CoreAudio
+import Network
 
 let claudeDoneNotification = Notification.Name("com.ignacio.pausa.claudeDone")
 
@@ -327,13 +328,15 @@ final class Banner: NSObject {
 
 // MARK: - App
 
-enum Kind { case eye, stand }
+enum Kind: String, Codable { case eye, stand }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var tick: Timer?
-    private var cfg = Config.load()
+    private var fileCfg = Config.load()
     private var cfgDate = Config.modified
+    private var remote: SyncSchedule?   // horario del host mientras estás sincronizado
+    private var cfg: Config { remote?.apply(to: fileCfg) ?? fileCfg }
     private var sinceEye = 0       // segundos desde la última pausa de vista
     private var sinceStand = 0     // segundos desde la última pausa de pararse
     private var paused = false
@@ -357,6 +360,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var settingsModel: SettingsModel?
 
+    private enum SyncState: Equatable { case solo, hosting, joined(String) }
+    private var sync = SyncState.solo
+    private var host: SyncHost?
+    private var guest: Peer?
+    private var guestConnected = false
+    private var session = SessionClock(eye: 0, stand: 0)
+    private let browser = SyncBrowser()
+    private let infoBanner = Banner()
+    private let syncItem = NSMenuItem(title: "Sincronizar", action: #selector(toggleHosting), keyEquivalent: "")
+    private let findItem = NSMenuItem(title: "Buscar sincronización", action: nil, keyEquivalent: "")
+    private let leaveItem = NSMenuItem(title: "Salir de la sincronización", action: #selector(leaveSession), keyEquivalent: "")
+    private let syncInfoItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
@@ -367,6 +383,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Reiniciar contador", action: #selector(reset), keyEquivalent: "r"))
         menu.addItem(waitItem)
         menu.addItem(.separator())
+        menu.addItem(syncInfoItem)
+        menu.addItem(syncItem)
+        menu.addItem(findItem)
+        menu.addItem(leaveItem)
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Configuración…", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Probar aviso de vista", action: #selector(testEye), keyEquivalent: ""))
@@ -374,8 +395,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Salir", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         menu.items.forEach { if $0.action != #selector(NSApplication.terminate(_:)) { $0.target = self } }
+        syncInfoItem.isEnabled = false
+        findItem.submenu = NSMenu()
+        menu.delegate = self
         statusItem.menu = menu
         installEditMenu()
+        browser.onChange = { [weak self] in self?.rebuildFindMenu() }
 
         eyeOverlay.onFinish = { [weak self] in self?.breakDone(.eye) }
         standOverlay.onFinish = { [weak self] in self?.breakDone(.stand) }
@@ -407,7 +432,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let d = Config.modified
         guard d != cfgDate else { return }
         cfgDate = d
-        cfg = Config.load()
+        fileCfg = Config.load()
         applyConfig()
     }
 
@@ -430,7 +455,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         problemItem.submenu = sub
 
         registerHotKey()
-        settingsModel?.cfg = cfg
+        settingsModel?.cfg = fileCfg
         refresh()
     }
 
@@ -438,6 +463,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func step() {
         reloadConfigIfChanged()
+        if sync == .hosting { hostTick() }  // el reloj del grupo corre aunque vos estés en pausa
         guard !paused else { return }
         if let k = warning {
             warnLeft -= 1
@@ -446,15 +472,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         guard !inBreak else { return }
-        sinceEye += 1
-        sinceStand += 1
         if snoozeLeft > 0 { snoozeLeft -= 1 }
         // En reunión el contador sigue, pero los avisos esperan a que cortes.
         inMeeting = cfg.waitForMeetings && micInUse()
-        if cfg.stand.enabled && sinceStand >= cfg.stand.every {
-            pending = .stand  // la de pararse le gana a la de vista
-        } else if pending == nil && cfg.eye.enabled && sinceEye >= cfg.eye.every {
-            pending = .eye
+        // Sincronizado, los contadores y las pausas los marca el grupo (ver sessionBreak).
+        if sync == .solo {
+            sinceEye += 1
+            sinceStand += 1
+            if cfg.stand.enabled && sinceStand >= cfg.stand.every {
+                pending = .stand  // la de pararse le gana a la de vista
+            } else if pending == nil && cfg.eye.enabled && sinceEye >= cfg.eye.every {
+                pending = .eye
+            }
         }
         if let k = pending, snoozeLeft == 0, !inMeeting { announce(k) }
         refresh()
@@ -525,7 +554,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pauseItem.title = paused ? "Reanudar" : "Pausar"
         waitItem.isHidden = !cfg.claudeEnabled
         updateSnoozeBanner()
-        statusItem.button?.title = statusTitle()
+        updateSyncMenu()
+        statusItem.button?.title = sync == .solo ? statusTitle() : "🔗 " + statusTitle()
     }
 
     private func statusTitle() -> String {
@@ -559,6 +589,154 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let k = pending else { return }
         snoozeLeft = 0
         beginBreak(k)
+    }
+
+    // MARK: Sincronización
+
+    private var sessionName: String { "Pausa de \(Host.current().localizedName ?? NSFullUserName())" }
+
+    private func hostTick() {
+        let s = SyncSchedule(fileCfg)
+        if let k = session.tick(s) {
+            host?.broadcast(.breakStarts(k))
+            sessionBreak(k)
+        }
+        host?.broadcast(.state(s, session))
+        sinceEye = max(session.eye, 0)
+        sinceStand = max(session.stand, 0)
+    }
+
+    // Arranca una pausa del grupo. Si estás en reunión o con una pospuesta, queda pendiente
+    // como cualquier otra y el ciclo normal la larga cuando puedas.
+    private func sessionBreak(_ k: Kind) {
+        guard !paused, !inBreak else { return }
+        if pending == nil || k == .stand { pending = k }
+        if snoozeLeft == 0 && !inMeeting { announce(k) }
+    }
+
+    private func received(_ m: SyncMessage) {
+        switch m.type {
+        case "state":
+            guard let s = m.schedule else { return }
+            guestConnected = true
+            if s != remote { remote = s; applyConfig() }
+            sinceEye = max(m.eye ?? 0, 0)
+            sinceStand = max(m.stand ?? 0, 0)
+            refresh()
+        case "break":
+            if let k = m.kind { sessionBreak(k) }
+        default:
+            break
+        }
+    }
+
+    @objc private func toggleHosting() {
+        if sync == .hosting { stopHosting(); return }
+        let h = SyncHost()
+        h.onChange = { [weak self] in self?.refresh() }
+        h.onFail = { [weak self] in
+            self?.stopHosting()
+            self?.flash("No se pudo compartir la sincronización en la red")
+        }
+        do {
+            try h.start(name: sessionName)
+        } catch {
+            flash("No se pudo compartir la sincronización: \(error.localizedDescription)")
+            return
+        }
+        session = SessionClock(eye: sinceEye, stand: sinceStand)
+        host = h
+        sync = .hosting
+        refresh()
+    }
+
+    private func stopHosting() {
+        host?.stop()
+        host = nil
+        sync = .solo
+        refresh()
+    }
+
+    @objc private func joinFound(_ sender: NSMenuItem) {
+        guard sender.tag < browser.results.count else { return }
+        let r = browser.results[sender.tag]
+        let name = serviceName(r)
+        let p = Peer(NWConnection(to: r.endpoint, using: .tcp))
+        p.onMessage = { [weak self] m in self?.received(m) }
+        p.onClose = { [weak self] in
+            self?.endGuest()
+            self?.flash("Se cortó la sincronización con \(name)")
+        }
+        p.start()
+        p.send(.hello(NSFullUserName()))
+        guest = p
+        guestConnected = false
+        sync = .joined(name)
+        refresh()
+    }
+
+    @objc private func leaveSession() {
+        guest?.onClose = nil
+        guest?.conn.cancel()
+        endGuest()
+    }
+
+    // De vuelta a tu horario, siguiendo desde donde iba el grupo.
+    private func endGuest() {
+        guest = nil
+        sync = .solo
+        remote = nil
+        applyConfig()
+    }
+
+    private func flash(_ text: String) {
+        infoBanner.show(text, buttons: [])
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.infoBanner.hide() }
+    }
+
+    private func updateSyncMenu() {
+        syncItem.title = sync == .hosting ? "Dejar de sincronizar" : "Sincronizar"
+        syncItem.isHidden = !(sync == .solo || sync == .hosting)
+        findItem.isHidden = sync != .solo
+        leaveItem.isHidden = { if case .joined = sync { return false }; return true }()
+        switch sync {
+        case .solo:
+            syncInfoItem.isHidden = true
+        case .hosting:
+            let names = host?.peers.map(\.name).filter { !$0.isEmpty } ?? []
+            let n = host?.peers.count ?? 0
+            syncInfoItem.title = n == 0 ? "🔗 Sincronizando · esperando a que se unan"
+                : "🔗 Sincronizando con \(n): " + (names.isEmpty ? "\(n) conectados" : names.joined(separator: ", "))
+            syncInfoItem.isHidden = false
+        case .joined(let name):
+            syncInfoItem.title = guestConnected ? "🔗 Sincronizado con \(name)" : "🔗 Conectando a \(name)…"
+            syncInfoItem.isHidden = false
+        }
+    }
+
+    // Busca sesiones solo mientras el menú está abierto.
+    func menuWillOpen(_ menu: NSMenu) {
+        guard sync == .solo else { return }
+        browser.start()
+        rebuildFindMenu()
+    }
+
+    func menuDidClose(_ menu: NSMenu) { browser.stop() }
+
+    private func rebuildFindMenu() {
+        guard let m = findItem.submenu else { return }
+        m.removeAllItems()
+        if browser.results.isEmpty {
+            let it = NSMenuItem(title: "Buscando en la red…", action: nil, keyEquivalent: "")
+            it.isEnabled = false
+            m.addItem(it)
+        }
+        for (i, r) in browser.results.enumerated() {
+            let it = NSMenuItem(title: serviceName(r), action: #selector(joinFound(_:)), keyEquivalent: "")
+            it.tag = i
+            it.target = self
+            m.addItem(it)
+        }
     }
 
     // MARK: Claude
@@ -612,7 +790,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc private func openSettings() {
         if settingsWindow == nil {
-            let model = SettingsModel(cfg)
+            let model = SettingsModel(fileCfg)
             settingsModel = model
             settingsWindow = makeSettingsWindow(model)
         }
