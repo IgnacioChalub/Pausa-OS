@@ -8,7 +8,7 @@ El menú de Pausa: arriba el estado, después las acciones del momento, la jam y
 1. Estado (ítems deshabilitados): la próxima pausa y cuánto falta, o el estado actual ("Pospuesta · vuelve en 4:59", "En reunión · la pausa espera"). Si hay jam, una línea con su estado. Si config.yml tiene errores, "Revisá config.yml" con submenú.
 2. Acciones: Pausar / Reanudar (⌘P), Reiniciar contador (⌘R), Esperar a Claude (el atajo configurado).
 3. Jam: "Crear una jam" y "Unirme a una jam ›" si estás solo; "Terminar la jam" si sos quien la creó; "Salir de la jam" si te uniste.
-4. Configuración… (⌘,) y Salir de Pausa (⌘Q).
+4. Configuración… (⌘,), Acerca de Pausa (panel estándar con la marca) y Salir de Pausa (⌘Q).
 
 **Reglas:**
 - Ítems de estado con su SF Symbol en `NSMenuItem.image` (plantilla), nunca un emoji al principio del título.

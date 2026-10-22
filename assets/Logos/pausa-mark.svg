@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 452" fill="#86c4ac">
+  <!-- La marca de Pausa: la barra corta es la pausa de la vista, la larga la de pararse. Misma geometría que tools/make-icon.swift. -->
+  <rect x="0" y="92" width="124" height="268" rx="62"/>
+  <rect x="216" y="0" width="124" height="452" rx="62"/>
+</svg>

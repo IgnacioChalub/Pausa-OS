@@ -483,6 +483,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(leaveItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Configuración…", action: #selector(openSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem(title: "Acerca de Pausa", action: #selector(about), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Salir de Pausa", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         menu.items.forEach { if $0.action != #selector(NSApplication.terminate(_:)) { $0.target = self } }
         statusInfoItem.isEnabled = false
@@ -937,6 +938,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if paused { cancelWarning() }  // al reanudar, la pausa pendiente vuelve a avisar
         refresh()
     }
+    // Panel estándar: toma el ícono, el nombre y la versión del Info.plist.
+    @objc private func about() {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.orderFrontStandardAboutPanel(nil)
+    }
+
     @objc private func openSettings() {
         if settingsWindow == nil {
             let model = SettingsModel(fileCfg)

@@ -33,6 +33,18 @@ open ~/Applications/Pausa.app
 
 Para que arranque sola: Configuración del Sistema → General → Ítems de inicio → agregar `Pausa.app`.
 
+
+## Empaquetar para otros
+
+```sh
+./package.sh          # → dist/Pausa-<versión>.dmg
+```
+
+Arma un `.dmg` con ventana propia (fondo eucalipto con la marca, flecha de arrastrar, sin barras de Finder) y el ícono de Pausa en el disco: el otro lo abre y arrastra Pausa a Aplicaciones. El fondo lo dibuja `tools/make-dmg-background.swift` y la ventana la arma [dmgbuild](https://github.com/dmgbuild/dmgbuild) con `tools/dmg-settings.py`; la primera vez se instala solo en `tools/.venv`. La app es universal (Apple Silicon e Intel) y abre desde macOS 13. La versión sale de `VERSION`.
+
+- **Sin certificado Developer ID**, la primera vez en otra Mac macOS avisa que no puede verificarla: clic derecho en Pausa → **Abrir**, o **Ajustes del Sistema → Privacidad y seguridad → Abrir igual**.
+- **Con un certificado "Developer ID Application"** en el llavero, `package.sh` lo usa solo. Para que abra sin ninguna advertencia, además hay que notarizar: guardá una vez las credenciales con `xcrun notarytool store-credentials pausa …` y corré `NOTARY_PROFILE=pausa ./package.sh`.
+- El ícono se genera con `swift tools/make-icon.swift` (queda en `assets/`). La marca sola está en `assets/Logos/pausa-mark.svg`.
 ## Integración con Claude Code
 
 Agregar en `~/.claude/settings.json`:
