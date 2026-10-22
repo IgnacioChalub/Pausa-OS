@@ -70,5 +70,6 @@ Todo se configura en `config.yml`: qué está prendido, cada cuánto, cuánto du
 
 - `./build.sh` crea `config.yml` a partir del example si todavía no existe (no va a git) y lo enlaza en `~/.config/pausa/config.yml`, que es lo que lee la app.
 - La app lo relee sola cuando guardás. Si hay una clave mal escrita aparece "⚠️ Revisá config.yml" en el menú.
+- **Desde Spotlight:** escribí "Pausa Config" y Enter (abre la mini-app *Pausa Configuración*, que Pausa deja a su lado al arrancar), o abrí Pausa cuando ya está corriendo. También anda `open pausa://configuracion`.
 - **Configuración…** (Cmd+,) en el menú abre una ventana para editar todo sin tocar el archivo. Cada cambio se guarda al toque en `config.yml`.
 

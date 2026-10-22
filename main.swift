@@ -465,7 +465,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let leaveItem = NSMenuItem(title: "Salir de la jam", action: #selector(leaveSession), keyEquivalent: "")
     private let syncInfoItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
 
+    // pausa://configuracion (lo abre la mini-app "Pausa Configuración" que encuentra Spotlight).
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard urls.contains(where: { $0.scheme == "pausa" && $0.host == "configuracion" }) else { return }
+        DispatchQueue.main.async { self.openSettings() }
+    }
+
+    // Abrir Pausa cuando ya está corriendo (Spotlight, Finder, Launchpad) abre la Configuración.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openSettings()
+        return false
+    }
+
+    // Deja "Pausa Configuración" al lado de Pausa (y la actualiza si cambió de build), así Spotlight
+    // la encuentra también en instalaciones desde el .dmg. No toca nada si Pausa corre desde el disco.
+    private func installSettingsShortcut() {
+        let fm = FileManager.default
+        let name = "Pausa Configuración.app"
+        let src = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/\(name)")
+        let dir = Bundle.main.bundleURL.deletingLastPathComponent()
+        let dst = dir.appendingPathComponent(name)
+        guard fm.fileExists(atPath: src.path), !dir.path.hasPrefix("/Volumes/"),
+              !dir.path.contains("AppTranslocation"), fm.isWritableFile(atPath: dir.path) else { return }
+        func build(_ u: URL) -> String? { Bundle(url: u)?.infoDictionary?["CFBundleVersion"] as? String }
+        guard build(dst) != build(src) || !fm.fileExists(atPath: dst.path) else { return }
+        try? fm.removeItem(at: dst)
+        try? fm.copyItem(at: src, to: dst)
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installSettingsShortcut()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
 
