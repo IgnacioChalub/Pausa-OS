@@ -429,6 +429,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var cfg: Config { remote?.apply(to: fileCfg) ?? fileCfg }
     private var sinceEye = 0       // segundos desde la última pausa de vista
     private var sinceStand = 0     // segundos desde la última pausa de pararse
+    private var lastFixedSlot: Date?  // último minuto en que disparó el horario fijo (para no repetir)
     private var paused = false
     private var inMeeting = false
     private var pending: Kind?     // pausa que ya tocaba pero espera (reunión o pospuesta)
@@ -612,7 +613,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if sync == .solo {
             sinceEye += 1
             sinceStand += 1
-            if cfg.stand.enabled && sinceStand >= cfg.stand.every {
+            if cfg.fixedSchedule {
+                // Horario fijo: dispara según el minuto del reloj, no desde la última pausa.
+                if let k = fixedDue(), k == .stand || pending == nil { pending = k }
+            } else if cfg.stand.enabled && sinceStand >= cfg.stand.every {
                 pending = .stand  // la de pararse le gana a la de vista
             } else if pending == nil && cfg.eye.enabled && sinceEye >= cfg.eye.every {
                 pending = .eye
@@ -638,6 +642,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard (0..<5 * 60).contains(gap) else { return }
         sinceEye = d.integer(forKey: "sinceEye") + gap
         sinceStand = d.integer(forKey: "sinceStand") + gap
+    }
+
+    // Horario fijo: ¿toca una pausa en este minuto del reloj? Dispara una sola vez por minuto.
+    private func fixedDue() -> Kind? {
+        let cal = Calendar.current
+        let now = Date()
+        let c = cal.dateComponents([.year, .month, .day, .hour, .minute], from: now)
+        guard let minute = c.minute, let slot = cal.date(from: c), slot != lastFixedSlot else { return nil }
+        var kind: Kind?
+        if cfg.stand.enabled && cfg.fixedStandMinutes.contains(minute) { kind = .stand }  // la larga gana
+        else if cfg.eye.enabled && cfg.fixedEyeMinutes.contains(minute) { kind = .eye }
+        if kind != nil { lastFixedSlot = slot }
+        return kind
+    }
+
+    // Próxima pausa del horario fijo y cuántos segundos faltan (para la barra de menú).
+    private func nextFixed() -> (Kind, Int)? {
+        var targets: [(Int, Kind)] = []
+        if cfg.stand.enabled { targets += cfg.fixedStandMinutes.map { ($0, .stand) } }
+        if cfg.eye.enabled { targets += cfg.fixedEyeMinutes.map { ($0, .eye) } }
+        guard !targets.isEmpty else { return nil }
+        let cal = Calendar.current
+        let now = Date()
+        let m = cal.component(.minute, from: now)
+        let s = cal.component(.second, from: now)
+        var best: (Kind, Int)?
+        for (tm, k) in targets {
+            var secs = ((tm - m + 60) % 60) * 60 - s
+            if secs <= 0 { secs += 3600 }  // este minuto ya pasó: la próxima es dentro de una hora
+            if secs < best?.1 ?? .max { best = (k, secs) }
+        }
+        return best
     }
 
     private var canSnooze: Bool { cfg.snoozeEnabled && (cfg.snoozeMax == 0 || snoozes < cfg.snoozeMax) }
@@ -735,9 +771,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return ("moon.zzz", cfg.showCountdown ? clock(snoozeLeft) : "", "Pospuesta · vuelve en \(clock(snoozeLeft))", Palette.amber)
         }
         var next: (Kind, Int)?
-        if cfg.eye.enabled { next = (.eye, cfg.eye.every - sinceEye) }
-        if cfg.stand.enabled, cfg.stand.every - sinceStand <= next?.1 ?? .max {
-            next = (.stand, cfg.stand.every - sinceStand)
+        if cfg.fixedSchedule {
+            next = nextFixed()
+        } else {
+            if cfg.eye.enabled { next = (.eye, cfg.eye.every - sinceEye) }
+            if cfg.stand.enabled, cfg.stand.every - sinceStand <= next?.1 ?? .max {
+                next = (.stand, cfg.stand.every - sinceStand)
+            }
         }
         guard let (k, left) = next else { return ("eye.slash", "", "Todo apagado", nil) }
         let t = clock(max(left, 0))

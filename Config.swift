@@ -81,6 +81,9 @@ struct BreakConfig {
 struct Config {
     var eye: BreakConfig
     var stand: BreakConfig
+    var fixedSchedule: Bool        // horario fijo por reloj de pared, en vez de contar desde la última pausa
+    var fixedEyeMinutes: [Int]     // minutos de la hora en que arranca la pausa corta
+    var fixedStandMinutes: [Int]   // minutos de la hora en que arranca la pausa larga
     var snoozeEnabled: Bool
     var snoozeSeconds: Int
     var snoozeMax: Int    // 0 = sin límite
@@ -166,6 +169,9 @@ struct Config {
                   title: "Mirá algo lejos", sub: "Algo a unos 6 metros. Dejá descansar la vista.", rings: 1)
         stand = brk("pararse", every: 60, duration: 300, warning: 10, warningText: "Pausa larga en {s}",
                     title: "Levantate", sub: "Caminá, estirate, tomá agua.", rings: 3)
+        fixedSchedule = v.bool("horario_fijo.activado", false)
+        fixedEyeMinutes = v.minuteList("horario_fijo.vista_minutos", [20, 40])
+        fixedStandMinutes = v.minuteList("horario_fijo.pararse_minutos", [0])
         snoozeEnabled = v.bool("posponer.activado", true)
         snoozeSeconds = v.minutes("posponer.minutos", 5)
         snoozeMax = v.int("posponer.maximo_veces", 3)
@@ -236,5 +242,17 @@ private final class Values {
         guard let v = get(k) else { return Int(d * 60) }
         guard let n = Double(v) else { bad(k, v); return Int(d * 60) }
         return max(Int(n * 60), 1)
+    }
+
+    // Lista de minutos de la hora (0–59) separados por coma, ej. "20, 40". Ordenada y sin repetidos.
+    func minuteList(_ k: String, _ d: [Int]) -> [Int] {
+        guard let v = get(k) else { return d }
+        var out = Set<Int>()
+        for part in v.split(separator: ",") {
+            let t = part.trimmingCharacters(in: .whitespaces)
+            guard let n = Int(t), (0...59).contains(n) else { bad(k, v); return d }
+            out.insert(n)
+        }
+        return out.isEmpty ? d : out.sorted()
     }
 }

@@ -32,6 +32,13 @@ pararse:
   sonido: Sosumi
   repeticiones_sonido: 3
 
+# Horario fijo: en vez de contar desde la última pausa, dispara en minutos fijos del reloj.
+# Ej. (lo de abajo): pausa corta a las y 20 y a las y 40, pausa larga en punto cada hora.
+horario_fijo:
+  activado: false                   # false = modo normal (contador desde la última pausa)
+  vista_minutos: "20, 40"           # minutos de la hora (0–59) para la pausa corta
+  pararse_minutos: "0"              # minutos de la hora (0–59) para la pausa larga
+
 posponer:
   activado: true                    # botón "Posponer" en la cuenta regresiva y en la pausa
   minutos: 5

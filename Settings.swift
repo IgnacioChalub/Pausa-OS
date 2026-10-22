@@ -50,6 +50,16 @@ final class SettingsModel: ObservableObject {
         bind(kp) { Config.set(path, String(format: "%.2f", $0)) }
     }
 
+    // Lista de minutos de la hora (ej. "20, 40") ⇄ [Int], guardada como texto en el archivo.
+    func minuteList(_ path: String, _ kp: WritableKeyPath<Config, [Int]>) -> Binding<String> {
+        Binding(get: { self.cfg[keyPath: kp].map(String.init).joined(separator: ", ") }, set: { text in
+            let mins = text.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+                .filter { (0...59).contains($0) }
+            self.cfg[keyPath: kp] = Array(Set(mins)).sorted()
+            Config.set(path, "\"\(text)\"")
+        })
+    }
+
     // Config guarda segundos; en el archivo y en la pantalla van minutos.
     func minutes(_ path: String, _ kp: WritableKeyPath<Config, Int>) -> Binding<Double> {
         Binding(get: { Double(self.cfg[keyPath: kp]) / 60 }, set: { m in
@@ -75,6 +85,18 @@ struct SettingsView: View {
             }
             breakSection("Pausa corta", "vista", \.eye, .eye)
             breakSection("Pausa larga", "pararse", \.stand, .stand)
+
+            Section("Horario fijo") {
+                Toggle("Disparar por reloj en vez de contar desde la última pausa",
+                       isOn: model.bool("horario_fijo.activado", \.fixedSchedule))
+                Group {
+                    TextField("Pausa corta en los minutos", text: model.minuteList("horario_fijo.vista_minutos", \.fixedEyeMinutes))
+                    TextField("Pausa larga en los minutos", text: model.minuteList("horario_fijo.pararse_minutos", \.fixedStandMinutes))
+                    Text("Minutos de cada hora (0–59), separados por coma. Ej.: 20, 40 para la pausa corta; 0 para la larga.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .disabled(!model.cfg.fixedSchedule)
+            }
 
             Section("Posponer") {
                 Toggle("Permitir posponer", isOn: model.bool("posponer.activado", \.snoozeEnabled))
